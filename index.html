@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>OTTO – Triagem ORL</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @keyframes blink { 0%,80%,100%{opacity:0} 40%{opacity:1} }
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100">
+  <div class="mx-auto flex min-h-screen w-full max-w-md flex-col">
+    <!-- HEADER -->
+    <div class="sticky top-0 z-50">
+      <header class="grid grid-cols-3 items-center bg-white p-4 text-gray-900 dark:bg-gray-800 dark:text-gray-100">
+        <div class="flex items-center space-x-2">
+          <span aria-hidden="true" class="text-2xl">🩺</span>
+          <span class="font-semibold">OTTO</span>
+        </div>
+        <h1 class="text-center text-sm font-bold">Triagem ORL</h1>
+        <div class="flex justify-end space-x-2">
+          <button id="reset-btn" type="button" aria-label="Reiniciar" class="p-2">↻</button>
+          <button id="theme-toggle" type="button" aria-label="Alternar tema" class="p-2">🌙</button>
+        </div>
+      </header>
+      <div class="bg-yellow-100 p-1 text-center text-xs text-gray-900 dark:bg-yellow-800 dark:text-gray-100">
+        Este assistente realiza triagem inicial e não substitui consulta médica.
+      </div>
+    </div>
+
+    <!-- CHAT -->
+    <main id="chat" class="flex-1 overflow-y-auto p-4" aria-label="Mensagens">
+      <div id="messages" class="space-y-2"></div>
+    </main>
+
+    <!-- FOOTER -->
+    <footer class="sticky bottom-0 bg-white p-4 dark:bg-gray-800">
+      <progress id="progress" value="0" max="1" class="mb-2 w-full dark:bg-gray-700"></progress>
+      <button id="review-symptoms" type="button" aria-label="Revisar sintomas" class="mb-2 rounded border px-3 py-1 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100">
+        Revisar sintomas
+      </button>
+      <div id="quick-replies" class="mb-2 flex flex-wrap gap-2"></div>
+      <form id="input-form" class="flex gap-2">
+        <input id="user-input" type="text" aria-label="Mensagem do usuário" placeholder="Descreva o que sente..." autocomplete="off"
+               class="flex-1 rounded border p-2 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:placeholder-gray-400"/>
+        <button type="submit" aria-label="Enviar mensagem" class="rounded bg-blue-600 px-4 py-2 text-white">Enviar</button>
+      </form>
+    </footer>
+  </div>
+
+  <!-- CONSENTIMENTO -->
+  <div id="consent" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" role="dialog" aria-modal="true">
+    <div class="mx-4 w-full max-w-md rounded bg-white p-4 text-center dark:bg-gray-800">
+      <p class="mb-4 text-sm">Para iniciar, confirme o consentimento de uso de dados conforme a LGPD.</p>
+      <label class="mb-4 flex items-center justify-center space-x-2">
+        <input type="checkbox" id="lgpd-checkbox" aria-label="Confirmo consentimento"/>
+        <span>Li e concordo.</span>
+      </label>
+      <button id="start-btn" disabled aria-label="Iniciar"
+              class="w-full rounded bg-blue-600 py-2 text-white opacity-50">Iniciar</button>
+    </div>
+  </div>
+
+  <!-- OVERLAY: SINTOMAS -->
+  <div id="symptom-overlay" class="fixed inset-0 z-40 hidden items-center justify-center bg-black/50" role="dialog" aria-modal="true">
+    <form id="symptom-form" class="mx-4 w-full max-w-md space-y-4 rounded bg-white p-4 text-left dark:bg-gray-800">
+      <h2 class="text-center text-sm font-semibold">Sintomas atuais</h2>
+      <div id="symptom-options" class="max-h-60 space-y-2 overflow-y-auto"></div>
+      <div class="flex justify-end gap-2">
+        <button type="button" id="skip-symptoms" class="rounded border px-3 py-1 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100">Pular</button>
+        <button type="submit" class="rounded bg-blue-600 px-3 py-1 text-white">Continuar</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- OVERLAY: RED FLAGS -->
+  <div id="flag-overlay" class="fixed inset-0 z-40 hidden items-center justify-center bg-black/50" role="dialog" aria-modal="true">
+    <form id="flag-form" class="mx-4 w-full max-w-md space-y-4 rounded bg-white p-4 text-left dark:bg-gray-800">
+      <h2 class="text-center text-sm font-semibold">Sinais de Alerta</h2>
+      <div id="flag-options" class="max-h-60 space-y-2 overflow-y-auto"></div>
+      <label class="flex items-center space-x-2">
+        <input type="checkbox" id="no-flags"/>
+        <span>Não sinto nada alarmante no momento</span>
+      </label>
+      <div class="flex justify-end">
+        <button type="submit" class="rounded bg-blue-600 px-3 py-1 text-white">Continuar</button>
+      </div>
+    </form>
+  </div>
+
+  <script>
+  // Produção (GitHub Pages chamando Heroku)
+  //window.ROB_BACKEND_API_URL = "https://SEU-APP.herokuapp.com";
+  window.ROB_BACKEND_API_URL = "http://127.0.0.1:8000";
+
+</script>
+
+<!-- Módulo local opcional (economiza tokens e provê perguntas de follow-up) -->
+<script src="diagnostics.js"></script>
+
+<!-- Orquestrador que usa diagnostics.js se presente -->
+<script src="robotto.js"></script>
+
+<!-- Sua UI -->
+<script src="app-ui.js"></script>
+</body>
+<footer>
+  <p class="text-center text-xs text-gray-500 dark:text-gray-400 mt-4">
+    Desenvolvido por Dr. Dario Hart. Apoio Otosig Telemedicina </p>
+</footer>  
+</html>

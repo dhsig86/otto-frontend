@@ -1,0 +1,9 @@
+# nunca versionar backend dentro do repo do front
+otto-backend/
+
+# chaves e segredos locais
+api_key.txt
+api_keys.txt
+.env
+# arquivos de configuração do editor
+.vscode/    
