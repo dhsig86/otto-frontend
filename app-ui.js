@@ -125,7 +125,7 @@
   } else {
     wrap.className = "flex items-start gap-2";
     wrap.innerHTML = `
-      <img src="assets/OTTO_rounded.png" alt="OTTO" class="mt-1 h-7 w-7 rounded-full ring-1 ring-sky-200 dark:ring-gray-700"/>
+      <img src="assets/otto-rounded.png" alt="OTTO" class="mt-1 h-7 w-7 rounded-full ring-1 ring-sky-200 dark:ring-gray-700"/>
       <div class="${base} bg-white text-gray-900 dark:bg-gray-800 dark:text-gray-100">${html}</div>
     `;
   }
