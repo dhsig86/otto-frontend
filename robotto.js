@@ -2,16 +2,7 @@
   ROBOTTO — Tele-ENT Triage Orchestrator
   File: robotto.js
   Version: 2.1.4 (2025-08-19)
-
-  O que muda nesta versão:
-  - Carregamento resiliente das regras (404 não quebra o fluxo).
-  - Inferência de domínio quando ausente.
-  - Integra diagnostics.js (window.localDifferentials) quando disponível, com gaps.questions.
-  - Fallback local por priors caso não exista diagnostics.js / regras.
-  - Chamada ao backend /api/triage (gpt-5-nano; temp=1), sem X-OTTO-KEY.
-  - AbortController com reason 'superseded' para evitar AbortError ruidoso.
 */
-
 (function () {
   const CONFIG = {
     BACKEND_API_URL: (window.ROB_BACKEND_API_URL || "https://<your-heroku-app>.herokuapp.com"),
@@ -19,15 +10,12 @@
     MODEL_HINT: "gpt-5-nano",
     TIMEOUT_MS: 120000,
     CONFIDENCE_THRESHOLD: 0.62,
-    STREAM: false,          // /api/triage retorna JSON (sem SSE)
+    STREAM: false,
     MAX_TOKENS: 700,
     TEMPERATURE: 1,
     VERSION: "2.1.4",
   };
 
-  // -----------------------------
-  // Utils
-  // -----------------------------
   const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
   const uniq = (arr) => Array.from(new Set(Array.isArray(arr) ? arr : []));
   const hasText = (s) => typeof s === "string" && s.trim().length > 0;
@@ -58,9 +46,6 @@
 
   const CACHE = { rules: null, rulesUrl: null, last: null, llmAborter: null };
 
-  // -----------------------------
-  // Regras (tolerante a erro)
-  // -----------------------------
   async function loadRules(url) {
     if (!url) return {};
     if (CACHE.rules && CACHE.rulesUrl === url) return CACHE.rules;
@@ -73,13 +58,10 @@
       return json;
     } catch (e) {
       console.warn(`rules: falha ao carregar (${url}):`, e);
-      return {}; // segue sem regras
+      return {};
     }
   }
 
-  // -----------------------------
-  // Fallback local por priors
-  // -----------------------------
   function localByPriors(payload, rules) {
     const domain = payload.domain || inferDomain(payload);
     const dxList = (rules?.domains?.[domain]?.dx) || [];
@@ -101,9 +83,6 @@
     };
   }
 
-  // -----------------------------
-  // Motor local (usa diagnostics.js se presente)
-  // -----------------------------
   function localEngine(payload, rules) {
     const p = { ...(payload || {}) };
     p.freeText = p.freeText || "";
@@ -128,15 +107,10 @@
         console.warn("diagnostics.localDifferentials falhou — usando priors. Erro:", e);
       }
     }
-
     return localByPriors(p, rules);
   }
 
-  // -----------------------------
-  // Backend /api/triage
-  // -----------------------------
   async function callLLMBackendForTriage(payload) {
-    // Cancela requisição/stream anterior, se houver
     if (CACHE.llmAborter) {
       try { CACHE.llmAborter.abort('superseded'); } catch {}
     }
@@ -176,9 +150,6 @@
     }
   }
 
-  // -----------------------------
-  // Runner
-  // -----------------------------
   async function run(payload, options = {}) {
     const { rulesUrl, forceLLM = false } = options;
 
@@ -201,25 +172,15 @@
     return result;
   }
 
-  // -----------------------------
-  // Public API
-  // -----------------------------
   function last() { return CACHE.last; }
   function setConfig(partial) { Object.assign(CONFIG, partial || {}); }
-
   window.ROBOTTO = { run, loadRules, setConfig, last };
 
-  // -----------------------------
-  // Self-test em dev
-  // -----------------------------
   if (window && window.location && /localhost|127\.0\.0\.1/.test(window.location.host)) {
     (async () => {
       try {
         const demoPayload = {
-          domain: null,
-          age: 28,
-          sex: "F",
-          duration: "2 dias",
+          domain: null, age: 28, sex: "F", duration: "2 dias",
           symptoms: ["febre", "dor_de_ouvido"],
           freeText: "dor que piora ao deitar. Sem tontura."
         };
@@ -231,5 +192,3 @@
     })();
   }
 })();
-// ---------------- Fim do módulo robotto.js ----------------
-// Fim do módulo robotto.js
