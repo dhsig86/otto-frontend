@@ -1,63 +1,55 @@
 /*
   ROBOTTO — Tele-ENT Triage Orchestrator
   File: robotto.js
-  Version: 3.2.0 (2025-08-20)
+  Version: 4.0.0 (2025-08-20)
 
-  Objetivos:
-  - Privilegiar o raciocínio do backend (GPT-5-nano) nas interações, sem sobrepesar "tempo".
-  - Evitar chamada precoce do backend quando há somente demografia (ex.: “39, masculino”).
-  - Manter compat com diagnostics.js v4 e app-ui.js v4 (fluxo sintomas → flags uma vez).
-  - Retornar local e backend separadamente + "blendedTop3" (para UI).
+  Objetivos implementados (Blueprint):
+  - Fluxo unificado: motor local primeiro; backend é chamado quando útil.
+  - NÃO chamar backend com apenas demografia.
+  - Injeta contexto local no free_text (sem mudar schema do backend).
+  - Política default "balanced" com limiar de confiança configurável.
+  - Unifica perguntas sugeridas (local + backend) e sinaliza "deferir" para UI.
+  - Envia ao backend apenas campos do TriageInput (FastAPI) — sem 422.
 
-  API exposta:
+  API:
     window.ROBOTTO = {
       run(payload, { rulesUrl?, forceLLM? } = {}) -> { ok, local, backend, meta },
-      setConfig(partial),     // alterar thresholds, URL do backend, etc.
-      loadRules(url),         // pré-carrega rules json
-      last()                  // último resultado
+      setConfig(partial),
+      loadRules(url),
+      last()
     }
 */
 
 (function () {
   // ----------------- Config -----------------
   const CONFIG = {
-    BACKEND_API_URL: (window.ROB_BACKEND_API_URL || "https://<your-backend>.example.com"),
+    // Defina no index.html antes dos scripts:  window.ROB_BACKEND_API_URL = "https://SEU-APP.herokuapp.com";
+    BACKEND_API_URL: (window.ROB_BACKEND_API_URL || "https://<CONFIGURE-BACKEND>.example.com"),
     ENDPOINT: "/api/triage",
-    MODEL_HINT: "gpt-5-nano",
-    TIMEOUT_MS: 120000,
-    STREAM: false,
-    MAX_TOKENS: 900,
-    TEMPERATURE: 1,
+
+    // Orquestração
+    CALL_LLM_POLICY: "balanced",   // "gpt_preferred" | "balanced" | "local_preferred"
+    LOCAL_CONF_THRESHOLD: 0.72,    // quanto maior, mais chances de chamar LLM
+    HYBRID_BACKEND_WEIGHT: 0.60,   // blend local x backend no top-3 final
+
+    // Prompt/meta
     LANG: "pt-BR",
+    DEEMPHASIZE_DURATION: true,
 
-    // Política de orquestração: "gpt_preferred" | "balanced" | "local_preferred"
-    CALL_LLM_POLICY: "gpt_preferred",
-
-    // Threshold de confiança do motor local para acionar LLM (quanto MAIOR, mais chamadas ao LLM)
-    LOCAL_CONF_THRESHOLD: 0.78, // para "balanced" recomendo ~0.72 (ajustável via setConfig)
-
-    // Peso do blend quando os dois estão disponíveis (0..1) — peso do BACKEND
-    HYBRID_BACKEND_WEIGHT: 0.70,
-
-    // Deixar claro ao backend que duração não deve dominar o raciocínio
-    DEEMPHASIZE_DURATION: true
+    // Timeout de rede
+    TIMEOUT_MS: 120000
   };
 
-  // ----------------- System Prompt (PT-BR) -----------------
+  // ----------------- System Prompt (PT-BR) — usado só para construir contexto (embed no free_text) -----------------
+  // Observação: não enviamos "system_prompt" como campo à API; incorporamos como metadado no próprio free_text
+  // para manter compatibilidade com o schema do backend.
   const SYSTEM_PROMPT_PT = `
-Você é o OTTO, um assistente de triagem em Otorrinolaringologia.
-Fale SEMPRE em português do Brasil, de forma clara, educada e concisa.
+Você é o OTTO, um assistente de triagem em Otorrinolaringologia. Fale SEMPRE em português do Brasil.
 
-Objetivo: gerar até 3 diagnósticos diferenciais com breve justificativa, checar sinais de alerta
-e, se necessário, fazer no máximo 1–2 perguntas objetivas por vez (preferencialmente SIM/NÃO).
+Objetivo: retornar até 3 diagnósticos diferenciais com breve justificativa; listar red flags; próximos passos; e, se necessário, sugerir 1–2 perguntas de cada vez (preferencialmente SIM/NÃO).
+Prioridades: (1) Segurança; (2) Clareza; (3) Parcimônia — não deixe "tempo de sintomas" dominar o raciocínio.
 
-Prioridades:
-1) Segurança: se houver red flag, sinalize nível de cuidado e orientação imediata.
-2) Clareza: explique em 1 frase a razão de cada hipótese.
-3) Parcimônia: use idade/sexo/febre/duração como contexto, mas NÃO permita que "tempo" (duração)
-   domine o raciocínio. Se a duração estiver ausente/ambígua, não penalize desproporcionalmente.
-
-Formato de retorno (JSON):
+Formato JSON de saída esperado:
 {
   "differentials": [{"dx": "...", "probability": 0..1, "rationale": "..."}],
   "next_steps": ["..."],
@@ -65,16 +57,15 @@ Formato de retorno (JSON):
   "red_flags": ["..."],
   "safety_note": "...",
   "references": ["..."],
-  "query_suggestions": {
-    "questions": [{"text": "Pergunta fechada para SIM/NÃO", "options": ["Sim","Não"]}]
-  }
+  "query_suggestions": { "questions": [{ "text": "Pergunta SIM/NÃO", "options": ["Sim","Não"] }] }
 }
-Se a entrada estiver vazia ou só com demografia, peça 1 pergunta curta e útil.
-  `.trim();
+Se vier apenas demografia, retorne uma pergunta única e objetiva para iniciar a coleta.
+`.trim();
 
   // ----------------- Utils -----------------
   const clamp = (x, a, b) => Math.max(a, Math.min(b, Number.isFinite(+x) ? +x : a));
   const norm = (s) => (s || "").toLowerCase().trim();
+  const uniq = (arr) => Array.from(new Set((arr || []).filter(Boolean)));
 
   function withTimeout(promise, ms, label = "timeout") {
     let t;
@@ -83,12 +74,10 @@ Se a entrada estiver vazia ou só com demografia, peça 1 pergunta curta e útil
   }
 
   function parseDurationDaysFrom(payload) {
-    // Preferir parser do diagnostics/app-ui, se existir
     if (payload?.extras?.parsed?.durationDays != null) return payload.extras.parsed.durationDays;
-
     const d = String(payload?.duration || payload?.duration_norm || "").toLowerCase();
 
-    // ISO simplificado: P{M}M P{W}W P{D}D (qualquer combinação) e PT{H}H
+    // ISO-like P#M#W#D
     let m = d.match(/^p(?:(\d+)m)?(?:(\d+)w)?(?:(\d+)d)?$/i);
     if (m) {
       const months = m[1] ? +m[1] : 0;
@@ -96,10 +85,11 @@ Se a entrada estiver vazia ou só com demografia, peça 1 pergunta curta e útil
       const days   = m[3] ? +m[3] : 0;
       return months * 30 + weeks * 7 + days;
     }
+    // PT#h
     m = d.match(/^pt(\d+)h$/i);
     if (m) return Math.max(0.04, (+m[1]) / 24);
 
-    // Fallback: linguagem natural
+    // textos livres
     const m2 = d.match(/(\d+)\s*(h|hora|horas|d|dia|dias|sem|semanas|m|mes|meses)/);
     if (m2) {
       const n = +m2[1];
@@ -140,18 +130,15 @@ Se a entrada estiver vazia ou só com demografia, peça 1 pergunta curta e útil
     for (const k of keysToTrack) {
       if ((prev[k] ?? null) !== (curr[k] ?? null)) return true;
     }
-    // Texto livre: diferença > 12 caracteres
     const tPrev = norm(prev.freeTextOriginal || prev.freeText || "");
     const tCurr = norm(curr.freeTextOriginal || curr.freeText || "");
     if (Math.abs(tCurr.length - tPrev.length) > 12) return true;
 
-    // Sintomas: conjunto mudou?
     const a = new Set((prev.symptoms || []).map(norm));
     const b = new Set((curr.symptoms || []).map(norm));
     if (a.size !== b.size) return true;
     for (const x of b) if (!a.has(x)) return true;
 
-    // Flags
     const fa = new Set((prev.red_flags_reported || []).map(norm));
     const fb = new Set((curr.red_flags_reported || []).map(norm));
     if (fa.size !== fb.size) return true;
@@ -173,12 +160,12 @@ Se a entrada estiver vazia ou só com demografia, peça 1 pergunta curta e útil
     if (!hasDemo) return false;
     if (hasSymptoms || hasFlags || hasClinSignals) return false;
 
-    // Se houver texto, checar se ele é "apenas demografia"
     const t = String(payload?.freeTextOriginal || payload?.freeText || "").toLowerCase();
     if (!t) return true;
-    // remove números e palavras clássicas de demografia
-    const stripped = t.replace(/\d+/g, "").replace(/\b(anos?|masculin[oa]|feminin[oa]|homem|mulher|masc|fem|sexo|idade)\b/g, "").trim();
-    // se sobrou "nada", é só demografia
+    const stripped = t
+      .replace(/\d+/g, "")
+      .replace(/\b(anos?|masculin[oa]|feminin[oa]|homem|mulher|masc|fem|sexo|idade)\b/g, "")
+      .trim();
     return stripped.length === 0;
   }
 
@@ -201,89 +188,110 @@ Se a entrada estiver vazia ou só com demografia, peça 1 pergunta curta e útil
     }
   }
 
-  // ----------------- Local engine wrapper -----------------
+  // ----------------- Motor local -----------------
   function runLocal(payload, rules) {
     const enriched = { ...payload };
     if (!enriched.domain) enriched.domain = inferDomain(enriched);
 
-    // duração em dias — útil para diagnostics.js, mas não será sobreponderado na orquestração
     const dd = parseDurationDaysFrom(enriched);
     if (dd != null && !enriched.duration_days) enriched.duration_days = dd;
 
     if (typeof window.localDifferentials !== "function") {
-      return { list: [], top3: [], confidence: 0.5, payload: enriched };
+      return { list: [], top3: [], confidence: 0.5, payload: enriched, gaps: { questions: [] }, red_flags: [] };
     }
-    const local = window.localDifferentials(enriched, rules) || { list: [], confidence: 0.5 };
+    const local = window.localDifferentials(enriched, rules) || { list: [], confidence: 0.5, gaps: { questions: [] }, red_flags: [] };
     local.top3 = (local.list || []).map(d => ({ dx: d.dx, norm: d.probability ?? d.norm ?? 0 }));
     local.payload = enriched;
     return local;
   }
 
-  // ----------------- Backend call -----------------
-  async function callLLMBackendForTriage(payload) {
-    const duration_days = parseDurationDaysFrom(payload);
+  // ----------------- Free-text com contexto local p/ LLM -----------------
+  function buildAugmentedFreeText(payload, local) {
+    const userText = (payload.freeTextOriginal || payload.freeText || "").trim();
 
-    const strategy = {
-      prefer_llm_reasoning: CONFIG.CALL_LLM_POLICY !== "local_preferred",
-      de_emphasize_duration: !!CONFIG.DEEMPHASIZE_DURATION,
-      backend_weight: CONFIG.HYBRID_BACKEND_WEIGHT
-    };
+    const top3 = (local?.top3 || []).slice(0, 3)
+      .map((d, i) => `${i+1}. ${d.dx} (~${Math.round((d.norm||0)*100)}%)`)
+      .join("\n") || "- (sem hipóteses locais)";
 
+    const gaps = (local?.gaps?.questions || [])
+      .slice(0, 3)
+      .map(q => `- ${q}`)
+      .join("\n") || "- (sem perguntas locais)";
+
+    const flags = (payload.red_flags_reported || [])
+      .map(f => `- ${f}`).join("\n") || "- (nenhuma relatada)";
+
+    const ctx =
+`[system_prompt_hint]
+${SYSTEM_PROMPT_PT}
+[/system_prompt_hint]
+
+[contexto_local]
+domínio: ${payload.domain || inferDomain(payload)}
+idioma: ${CONFIG.LANG}
+idade: ${payload.age ?? "n/d"}, sexo: ${payload.sex ?? "n/d"}
+duração(dias): ${parseDurationDaysFrom(payload) ?? "n/d"}
+trajetória: ${payload.trajectory ?? "n/d"}
+tmax: ${payload.fever_max_c ?? "n/d"}
+sintomas: ${(payload.symptoms || []).join(", ") || "n/d"}
+negações: ${(payload.negations || []).join(", ") || "n/d"}
+flags_reportadas:
+${flags}
+
+estratégia:
+- prefer_llm_reasoning=${CONFIG.CALL_LLM_POLICY !== "local_preferred"}
+- de_emphasize_duration=${!!CONFIG.DEEMPHASIZE_DURATION}
+- backend_weight=${CONFIG.HYBRID_BACKEND_WEIGHT}
+
+top3_local:
+${top3}
+
+lacunas_sugeridas:
+${gaps}
+[/contexto_local]`;
+
+    return userText ? `${userText}\n\n${ctx}` : ctx;
+  }
+
+  // ----------------- Backend call (envia apenas campos aceitos pelo FastAPI) -----------------
+  async function callLLMBackendForTriage(payload, local) {
     const body = {
-      model_hint: CONFIG.MODEL_HINT,
-      stream: CONFIG.STREAM,
-      max_tokens: CONFIG.MAX_TOKENS,
-      temperature: CONFIG.TEMPERATURE,
-
-      // prompts/idioma/contrato
-      system_prompt: SYSTEM_PROMPT_PT,
-      language: CONFIG.LANG,
-      expect_json: true,
-      include_suggestions: true,
-
-      // clínico
-      free_text: payload.freeText || "",
+      free_text: buildAugmentedFreeText(payload, local),
       age: payload.age ?? null,
       sex: payload.sex ?? null,
-      duration_days: duration_days ?? null,  // incluímos, mas backend é instruído a não sobreponderar
-      trajectory: payload.trajectory ?? payload?.extras?.parsed?.trajectory ?? null,
-      fever_max_c: payload.fever_max_c ?? payload?.extras?.parsed?.feverMaxC ?? null,
-      negations: payload.negations || payload?.extras?.parsed?.negations || [],
-      pain: { bucket: payload.pain_bucket ?? payload?.extras?.parsed?.pain?.label ?? null,
-              nrs:    payload.painScale  ?? payload?.extras?.parsed?.pain?.nrs   ?? null },
-
-      // contexto
-      domain: payload.domain || inferDomain(payload),
+      duration: payload.duration ?? payload.duration_norm ?? null,
       symptoms: payload.symptoms || [],
       comorbidities: payload.comorbidities || [],
       medications: payload.medications || [],
-      red_flags_reported: payload.red_flags_reported || [],
-
-      // orientação de orquestração
-      strategy
+      red_flags_reported: payload.red_flags_reported || []
     };
 
-    const url = (CONFIG.BACKEND_API_URL || "").replace(/\/+$/, "") + CONFIG.ENDPOINT;
-    const validUrl = /^https?:\/\//.test(CONFIG.BACKEND_API_URL || "") && !/[<>{}]/.test(CONFIG.BACKEND_API_URL);
+    const urlBase = (CONFIG.BACKEND_API_URL || "").replace(/\/+$/, "");
+    const url = urlBase + CONFIG.ENDPOINT;
+    const validUrl = /^https?:\/\//.test(urlBase) && !/[<>{}]/.test(urlBase);
     if (!validUrl) return { _error: true, message: "backend-url-not-configured" };
 
     const req = fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(body)
     });
 
     try {
       const res = await withTimeout(req, CONFIG.TIMEOUT_MS, "backend-timeout");
       if (!res.ok) throw new Error(`backend ${res.status}`);
       const json = await res.json();
-      // contrato esperado: {differentials:[{dx, probability, rationale}], next_steps:[], care_level, red_flags:[], safety_note, references?:[], query_suggestions?:{questions:[...]}}
+
+      // Normalização de campos
       if (Array.isArray(json?.differentials)) {
         json.differentials = json.differentials.map(d => ({
           dx: d.dx,
           probability: d.probability ?? d.prob ?? 0,
           rationale: d.rationale || d.reason || null
         }));
+      }
+      if (json?.query_suggestions?.questions && !Array.isArray(json.query_suggestions.questions)) {
+        json.query_suggestions.questions = [];
       }
       return json;
     } catch (e) {
@@ -292,9 +300,8 @@ Se a entrada estiver vazia ou só com demografia, peça 1 pergunta curta e útil
     }
   }
 
-  // ----------------- Orchestrator -----------------
+  // ----------------- Decisão de chamada -----------------
   function shouldCallLLM(policy, local, payload) {
-    // Evita backend quando há SÓ demografia (fluxo: abrir sintomas primeiro)
     if (isOnlyDemographics(payload)) return false;
 
     const conf = local?.confidence ?? 0.0;
@@ -308,18 +315,17 @@ Se a entrada estiver vazia ou só com demografia, peça 1 pergunta curta e útil
     : policy === "balanced"        ? Math.max(0.70, CONFIG.LOCAL_CONF_THRESHOLD - 0.05)
                                    : Math.max(0.60, CONFIG.LOCAL_CONF_THRESHOLD - 0.12);
 
-    // Critérios: privilegiar backend nas interações
-    if (conflict) return true;                 // texto vs checklist conflitantes
-    if (flags) return true;                    // qualquer red flag sinalizada
-    if (conf < threshold) return true;         // confiança local aquém do patamar
-    if (policy === "gpt_preferred" && (hasSymptoms || hasText)) return true; // dialogar mais com o LLM
+    if (conflict) return true;
+    if (flags) return true;
+    if (conf < threshold) return true;
+    if (policy === "gpt_preferred" && (hasSymptoms || hasText)) return true;
 
-    // Caso contrário, só chama se o usuário de fato mudou algo relevante
     if (significantChange(CACHE.lastPayload, payload)) return true;
 
     return false;
   }
 
+  // ----------------- Blend local + backend -----------------
   function blendDifferentials(localList, backendList, wBackend) {
     const map = new Map();
     (localList || []).forEach(d => {
@@ -342,47 +348,102 @@ Se a entrada estiver vazia ou só com demografia, peça 1 pergunta curta e útil
     return blended.slice(0, 3);
   }
 
+  // ----------------- Unificação de perguntas sugeridas -----------------
+  function unifyQuestions(local, backend) {
+    const qLocal = (local?.gaps?.questions || []).map(text => ({ text: String(text), options: ["Sim", "Não"] }));
+    const qBackend = (backend?.query_suggestions?.questions || []).map(q => ({
+      text: String(q.text || q),
+      options: Array.isArray(q.options) && q.options.length ? q.options : ["Sim", "Não"]
+    }));
+
+    // dedupe por texto normalizado
+    const seen = new Set();
+    const out = [];
+    for (const q of [...qLocal, ...qBackend]) {
+      const key = norm(q.text);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ text: q.text, options: uniq(q.options) });
+    }
+    return out.slice(0, 3);
+  }
+
+  // ----------------- Orchestrator -----------------
   async function run(payload, opts = {}) {
     const options = Object.assign({ rulesUrl: null, forceLLM: false }, opts);
     const rules = await loadRules(options.rulesUrl);
 
-    // 1) Motor local (rápido; não sobrepesa duração)
+    // 0) Sinaliza domínio se não vier
+    if (!payload?.domain) payload = { ...payload, domain: inferDomain(payload || {}) };
+
+    // 1) Motor local
     const local = runLocal(payload || {}, rules);
 
-    // 2) Decisão de chamada do backend — mais agressiva em gpt_preferred/balanced
+    // 2) Gate: só demografia? devolve "deferir"
+    const onlyDemo = isOnlyDemographics(local.payload);
+    if (onlyDemo) {
+      const resultDemo = {
+        ok: true,
+        local: Object.assign({}, local, { blendedTop3: [] }),
+        backend: null,
+        meta: {
+          ready: false,
+          deferred_reason: "only_demographics",
+          policy: CONFIG.CALL_LLM_POLICY,
+          used_backend: false,
+          reasons: {
+            below_threshold: null,
+            flags_present: false,
+            conflict: false,
+            significant_change: significantChange(CACHE.lastPayload, local.payload),
+            only_demographics_blocked: true
+          },
+          suggested_questions: unifyQuestions(local, null)
+        }
+      };
+      CACHE.last = resultDemo;
+      CACHE.lastPayload = JSON.parse(JSON.stringify(local.payload || {}));
+      return resultDemo;
+    }
+
+    // 3) Decisão de chamada do backend
     const policy = CONFIG.CALL_LLM_POLICY;
     const callLLM = options.forceLLM || shouldCallLLM(policy, local, local.payload);
 
-    // 3) Backend
+    // 4) Backend
     let backendResp = null;
     if (callLLM) {
-      backendResp = await callLLMBackendForTriage(local.payload);
+      backendResp = await callLLMBackendForTriage(local.payload, local);
     }
 
-    // 4) Blend opcional
-    let finalTop3 = local.top3?.map(d => ({ dx: d.dx, probability: d.norm })) || [];
+    // 5) Blend
+    let finalTop3 = (local.top3 || []).map(d => ({ dx: d.dx, probability: d.norm }));
     if (backendResp && !backendResp._error && Array.isArray(backendResp.differentials)) {
-      finalTop3 = blendDifferentials(
-        finalTop3,
-        backendResp.differentials,
-        CONFIG.HYBRID_BACKEND_WEIGHT
-      );
+      finalTop3 = blendDifferentials(finalTop3, backendResp.differentials, CONFIG.HYBRID_BACKEND_WEIGHT);
     }
 
-    // 5) Resultado
+    // 6) Red flags unificadas (local + backend)
+    const rfLocal = local.red_flags || [];
+    const rfBack = (backendResp && backendResp.red_flags) || [];
+    const redFlagsMerged = uniq([...rfLocal, ...rfBack]);
+
+    // 7) Resultado final
     const result = {
       ok: true,
       local: Object.assign({}, local, { blendedTop3: finalTop3 }),
       backend: backendResp,
       meta: {
+        ready: true,
         policy,
         used_backend: !!backendResp && !backendResp._error,
+        red_flags_merged: redFlagsMerged,
+        suggested_questions: unifyQuestions(local, backendResp),
         reasons: {
           below_threshold: (local.confidence ?? 0) < CONFIG.LOCAL_CONF_THRESHOLD,
           flags_present: (local.payload?.red_flags_reported || []).length > 0,
           conflict: detectConflict(local.payload),
           significant_change: significantChange(CACHE.lastPayload, local.payload),
-          only_demographics_blocked: isOnlyDemographics(local.payload)
+          only_demographics_blocked: false
         }
       }
     };
@@ -396,12 +457,11 @@ Se a entrada estiver vazia ou só com demografia, peça 1 pergunta curta e útil
   function setConfig(partial) {
     if (!partial || typeof partial !== "object") return;
     Object.assign(CONFIG, partial);
-    // sanity: clamp ranges
     CONFIG.HYBRID_BACKEND_WEIGHT = clamp(CONFIG.HYBRID_BACKEND_WEIGHT, 0, 1);
     CONFIG.LOCAL_CONF_THRESHOLD = clamp(CONFIG.LOCAL_CONF_THRESHOLD, 0.5, 0.95);
     if (partial.LANG) CONFIG.LANG = String(partial.LANG);
   }
 
-  // expose
+  // Expose
   window.ROBOTTO = { run, loadRules, setConfig, last };
 })();
