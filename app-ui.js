@@ -36,7 +36,14 @@
     },
     rulesUrl: "./rules_otorrino.json"
   };
-
+  // === Configura o ROBOTTO para esta sessão ===
+  if (window.ROBOTTO?.setConfig) {
+    window.ROBOTTO.setConfig({
+      CALL_LLM_POLICY: "balanced",
+      LOCAL_CONF_THRESHOLD: 0.72,
+      HYBRID_BACKEND_WEIGHT: 0.6
+    });
+  }
   // --------------------------
   // Catálogos (UI)
   // --------------------------

@@ -1,10 +1,10 @@
 {
-  "version": "2.1.0",
-  "updated_at": "2025-08-19",
+  "version": "2.2.0",
+  "updated_at": "2025-08-20",
   "locale": "pt-BR",
   "legal": {
-    "disclaimer": "Este assistente realiza triagem inicial e não substitui consulta médica. Em caso de piora, dúvidas ou sinais de alerta, procure atendimento presencial. Seus dados são tratados segundo a LGPD.",
-    "data_minimization_note": "Solicitamos apenas informações necessárias para a triagem. Você pode pedir acesso ou eliminação dos dados a qualquer momento."
+    "disclaimer": "Este assistente realiza triagem inicial e não...tendimento presencial. Seus dados são tratados segundo a LGPD.",
+    "data_minimization_note": "Solicitamos apenas informações ne...ê pode pedir acesso ou eliminação dos dados a qualquer momento."
   },
   "intake": {
     "sections": [
@@ -22,12 +22,24 @@
               "Primeira vez somente em Telemedicina",
               "Acompanhamento clínico / Seguimento terapêutico (Telemedicina)"
             ]
-          },
+          }
+        ]
+      },
+      {
+        "id": "contact",
+        "title": "Contato",
+        "fields": [
           {
-            "id": "main_complaint",
-            "label": "Queixa principal (texto livre)",
+            "id": "name",
+            "label": "Nome completo",
             "type": "text",
             "required": true
+          },
+          {
+            "id": "email",
+            "label": "E-mail para contato",
+            "type": "email",
+            "required": false
           },
           {
             "id": "phone",
@@ -45,766 +57,272 @@
             "id": "age",
             "label": "Idade",
             "type": "number",
-            "required": false,
-            "min": 0,
-            "max": 120
+            "required": false
           },
           {
             "id": "sex",
             "label": "Sexo (biológico)",
             "type": "single_choice",
             "required": false,
-            "choices": [
-              "Masculino",
-              "Feminino",
-              "Outro/Prefiro não dizer"
-            ]
-          }
-        ]
-      },
-      {
-        "id": "symptoms",
-        "title": "Sintomas atuais",
-        "fields": [
-          {
-            "id": "symptom_checklist",
-            "label": "O que está sentindo? (marque os que se aplicam)",
-            "type": "multi_choice",
-            "required": true,
-            "choices": [
-              "Febre",
-              "Tosse",
-              "Dor de cabeça",
-              "Nariz entupido",
-              "Coriza ou Catarro",
-              "Mau cheiro",
-              "Redução do Olfato",
-              "Redução do Paladar",
-              "Pressão na face",
-              "Dor de Ouvido",
-              "Sensação de ouvido tapado",
-              "Coceira no ouvido",
-              "Dificuldade de ouvir",
-              "Zumbido",
-              "Tontura",
-              "Sensação de Desmaio",
-              "Dor de Garganta",
-              "Mau Hálito",
-              "Sensação de Bolo na garganta",
-              "Dificuldade ou Desconforto para engolir",
-              "Aumento dos gânglios do pescoço",
-              "Roncos"
-            ]
-          },
-          {
-            "id": "had_before",
-            "label": "Já teve esses sintomas antes?",
-            "type": "single_choice",
-            "required": false,
-            "choices": [
-              "Sim",
-              "Não",
-              "Talvez"
-            ]
-          },
-          {
-            "id": "other_important_symptoms",
-            "label": "Houve outros sintomas importantes (ex.: falta de ar, palpitação, dor muito intensa, turvação visual, sensação de desmaio, sangramento volumoso)?",
-            "type": "single_choice",
-            "required": true,
-            "choices": [
-              "Sim",
-              "Não"
-            ]
-          },
-          {
-            "id": "allergic_profile",
-            "label": "Possui alergias a medicações ou outras substâncias?",
-            "type": "single_choice",
-            "required": true,
-            "choices": [
-              "Sim",
-              "Não"
-            ]
-          },
-          {
-            "id": "allergic_detail",
-            "label": "Se sim, quais?",
-            "type": "text",
-            "required": false
-          },
-          {
-            "id": "pain_scale",
-            "label": "Intensidade do(s) sintoma(s) principal(is) (0–10)",
-            "type": "scale",
-            "required": true,
-            "min": 0,
-            "max": 10
-          }
-        ]
-      },
-      {
-        "id": "history",
-        "title": "Histórico clínico",
-        "fields": [
-          {
-            "id": "chronic_disease",
-            "label": "Possui alguma doença crônica?",
-            "type": "single_choice",
-            "required": true,
-            "choices": [
-              "Hipertensão arterial",
-              "Diabetes",
-              "Hipotireoidismo/Hipertireoidismo",
-              "Artrite reumatoide",
-              "Lúpus",
-              "Depressão",
-              "Ansiedade",
-              "Outros",
-              "Nenhuma"
-            ]
-          },
-          {
-            "id": "cancer_history",
-            "label": "Já teve algum câncer?",
-            "type": "single_choice",
-            "required": true,
-            "choices": [
-              "Sim",
-              "Não"
-            ]
-          },
-          {
-            "id": "ent_surgery",
-            "label": "Já fez cirurgia de ouvido, nariz ou garganta?",
-            "type": "single_choice",
-            "required": true,
-            "choices": [
-              "Sim",
-              "Não"
-            ]
-          },
-          {
-            "id": "ent_surgery_detail",
-            "label": "Se sim, qual?",
-            "type": "text",
-            "required": false
-          },
-          {
-            "id": "family_hearing_loss",
-            "label": "Algum histórico de surdez na família?",
-            "type": "single_choice",
-            "required": false,
-            "choices": [
-              "Sim",
-              "Não",
-              "Outro"
-            ]
-          }
-        ]
-      },
-      {
-        "id": "habits",
-        "title": "Hábitos",
-        "fields": [
-          {
-            "id": "smoking",
-            "label": "Você é tabagista?",
-            "type": "single_choice",
-            "required": false,
-            "choices": [
-              "Sim",
-              "Não",
-              "Outro"
-            ]
-          },
-          {
-            "id": "cigarettes_per_day",
-            "label": "Se é tabagista, quantos cigarros/dia?",
-            "type": "text",
-            "required": false
-          },
-          {
-            "id": "alcohol_use",
-            "label": "Usa bebida alcoólica?",
-            "type": "single_choice",
-            "required": false,
-            "choices": [
-              "Sim",
-              "Não",
-              "Outro"
-            ]
-          }
-        ]
-      },
-      {
-        "id": "meds",
-        "title": "Medicações & anexos",
-        "fields": [
-          {
-            "id": "used_meds",
-            "label": "Usou alguma medicação para os sintomas atuais?",
-            "type": "single_choice",
-            "required": false,
-            "choices": [
-              "Sim",
-              "Não",
-              "Outro"
-            ]
-          },
-          {
-            "id": "used_meds_detail",
-            "label": "Se sim, qual?",
-            "type": "text",
-            "required": false
-          },
-          {
-            "id": "other_symptom_free_text",
-            "label": "Outro sintoma que chamou atenção (texto breve)",
-            "type": "text",
-            "required": false
-          },
-          {
-            "id": "media_upload",
-            "label": "Deseja enviar foto, vídeo ou áudio do problema?",
-            "type": "single_choice",
-            "required": false,
-            "choices": [
-              "Sim",
-              "Não"
-            ]
+            "choices": ["Feminino", "Masculino", "Outro/Prefiro não informar"]
           }
         ]
       }
     ]
   },
   "global_red_flags": [
-    {
-      "id": "global_airway_dyspnea",
-      "question": "Há falta de ar importante ou dificuldade para respirar?",
-      "rationale": "Sinal de comprometimento respiratório.",
-      "urgency": "immediate",
-      "on_true": {
-        "action": "ESCALATE",
-        "message": "🚑 Falta de ar importante: busque atendimento de emergência agora.",
-        "self_care": [
-          "Sente-se ereto e respire lentamente.",
-          "Use inalador ou oxigênio prescrito, se disponível.",
-          "Evite esforços e mantenha o ambiente ventilado."
-        ]
-      }
-    },
-    {
-      "id": "global_heavy_bleeding",
-      "question": "Há sangramento volumoso ou que não cessa?",
-      "rationale": "Risco hemodinâmico em epistaxe ou outras causas.",
-      "urgency": "urgent",
-      "on_true": {
-        "action": "ESCALATE",
-        "message": "⚠️ Sangramento não controlado: procure atendimento presencial.",
-        "self_care": [
-          "Aplique pressão direta no local do sangramento.",
-          "Se for no nariz, sente-se, incline a cabeça para frente e comprima as narinas por 10 a 15 minutos.",
-          "Mantenha-se em repouso e evite engolir sangue."
-        ]
-      }
-    },
-    {
-      "id": "global_very_intense_pain",
-      "question": "A dor está muito intensa (por exemplo, 8, 9 ou 10 em 10)?",
-      "rationale": "Dor desproporcional pode indicar complicação.",
-      "urgency": "urgent",
-      "on_true": {
-        "action": "ESCALATE",
-        "message": "⚠️ Dor muito intensa: avaliação presencial/teleconsulta prioritária.",
-        "self_care": [
-          "Descanse em local calmo.",
-          "Use analgésicos habituais se não houver contraindicação.",
-          "Evite esforços até ser avaliado."
-        ]
-      }
-    },
-    {
-      "id": "global_visual_blur",
-      "question": "Há turvação visual nova ou piora súbita da visão?",
-      "rationale": "Pode indicar complicações orbitárias/sistêmicas.",
-      "urgency": "urgent",
-      "on_true": {
-        "action": "ESCALATE",
-        "message": "⚠️ Alteração visual importante: procure avaliação presencial.",
-        "self_care": [
-          "Interrompa atividades que exijam visão precisa.",
-          "Evite dirigir ou operar máquinas.",
-          "Permaneça em local seguro até ser avaliado."
-        ]
-      }
-    },
-    {
-      "id": "global_presyncope_syncope",
-      "question": "Houve sensação de desmaio ou desmaio?",
-      "rationale": "Risco cardiovascular/neurológico.",
-      "urgency": "urgent",
-      "on_true": {
-        "action": "ESCALATE",
-        "message": "⚠️ Episódio de pré-síncope/síncope: avaliação presencial.",
-        "self_care": [
-          "Sente-se ou deite-se e eleve as pernas.",
-          "Mantenha o ambiente ventilado.",
-          "Hidrate-se com pequenos goles de água."
-        ]
-      }
-    },
-    {
-      "id": "global_palpitations",
-      "question": "Houve palpitações importantes associadas aos sintomas?",
-      "rationale": "Possível correlação cardiovascular.",
-      "urgency": "priority",
-      "on_true": {
-        "action": "ESCALATE",
-        "message": "⚠️ Palpitações relevantes: agende avaliação prioritária.",
-        "self_care": [
-          "Sente-se ou deite-se e respire profundamente.",
-          "Evite cafeína, álcool ou outros estimulantes.",
-          "Mantenha-se calmo até ser avaliado."
-        ]
-      }
-    }
+    "Falta de ar / dificuldade para respirar",
+    "Dor muito intensa / insuportável",
+    "Sangramento volumoso",
+    "Rigidez de pescoço",
+    "Turvação visual súbita",
+    "Palpitação ou sensação de desmaio"
   ],
   "domains": {
     "ouvido": {
-      "intake_examples": [
-        "dor de ouvido e saiu líquido",
-        "zumbido de um lado só",
-        "tontura forte com enjoo",
-        "ouço pior do lado direito",
-        "entrou água e agora dói"
-      ],
+      "title": "Ouvido",
       "dx": [
         {
           "name": "Otite Média Aguda",
           "prior": 0.25,
-          "symptom_weights": { "febre": 1.1, "otalgia": 1.6, "otorreia": 0.8, "plenitude": 0.5 }
+          "symptom_weights": {
+            "febre": 0.6,
+            "otalgia": 1.4,
+            "otorreia": 0.8,
+            "hipoacusia": 0.3
+          },
+          "source": "AAP/AHA; AAFP 2019",
+          "modifiers": {
+            "age": [
+              { "lte": 6, "boost": 0.10 }
+            ],
+            "fever_max_c": [
+              { "gte": 39.0, "boost": 0.10 }
+            ]
+          }
         },
         {
           "name": "Otite Externa Aguda",
-          "prior": 0.20,
-          "symptom_weights": { "prurido_otico": 1.0, "otalgia": 1.2, "otorreia": 0.6 }
+          "prior": 0.2,
+          "symptom_weights": {
+            "otalgia": 1.2,
+            "otorreia": 0.6
+          },
+          "source": "AAO-HNS; RCH",
+          "modifiers": {
+            "trajectory": [
+              { "is": "piorando", "boost": 0.05 }
+            ]
+          }
         },
         {
           "name": "Tampão de cerume",
-          "prior": 0.20,
-          "symptom_weights": { "plenitude": 1.2, "hipoacusia": 0.9, "otalgia": 0.2 }
+          "prior": 0.2,
+          "symptom_weights": {
+            "hipoacusia": 0.9,
+            "otalgia": 0.2
+          },
+          "source": "AAO-HNS Patient Info"
         },
         {
           "name": "Outra/Necessita Exame",
           "prior": 0.35,
-          "symptom_weights": { "tontura": 0.3, "presincope": 0.3 }
+          "symptom_weights": {
+            "tontura": 0.3
+          },
+          "source": "—"
         }
-      ],
-      "red_flags": [
-        {
-          "id": "ear_pain_drain_blood",
-          "question": "Há dor intensa, secreção ou sangramento no ouvido?",
-          "rationale": "Infecção complicada, perfuração, trauma.",
-          "urgency": "urgent",
-          "on_true": {
-            "action": "ESCALATE",
-            "message": "⚠️ Sinal de alerta no ouvido (dor/secreção/sangue). Procure avaliação presencial/teleconsulta prioritária.",
-            "self_care": [
-              "Mantenha o ouvido seco e não introduza objetos.",
-              "Limpe apenas a parte externa com gaze limpa.",
-              "Evite nadar ou molhar o ouvido."
-            ]
-          }
-        },
-        {
-          "id": "sudden_hearing_loss",
-          "question": "A perda de audição começou de forma súbita (horas/dias) ou piorou muito rápido?",
-          "rationale": "Emergência otológica.",
-          "urgency": "immediate",
-          "on_true": {
-            "action": "ESCALATE",
-            "message": "⚠️ Perda auditiva súbita/rápida: atendimento imediato.",
-            "self_care": [
-              "Evite ruídos altos e fones de ouvido.",
-              "Não pingue medicamentos no ouvido sem orientação.",
-              "Procure atendimento imediatamente."
-            ]
-          }
-        },
-        {
-          "id": "recurrent_vertigo",
-          "question": "Você tem tontura/vertigem forte, recorrente ou contínua?",
-          "rationale": "Causas periféricas/centrais exigem avaliação.",
-          "urgency": "urgent",
-          "on_true": {
-            "action": "ESCALATE",
-            "message": "⚠️ Tontura importante/recorrente: avaliação presencial.",
-            "self_care": [
-              "Sente-se ou deite-se assim que a tontura surgir.",
-              "Evite movimentos bruscos e locais altos.",
-              "Hidrate-se com pequenos goles de água."
-            ]
-          }
-        },
-        {
-          "id": "ear_deformity",
-          "question": "Há deformidade na orelha (desde o nascimento ou após trauma)?",
-          "rationale": "Requer avaliação especializada.",
-          "urgency": "priority",
-          "on_true": {
-            "action": "ESCALATE",
-            "message": "⚠️ Deformidade auricular: encaminhamento prioritário.",
-            "self_care": [
-              "Proteja a orelha de novos traumas.",
-              "Não tente reposicionar a área afetada.",
-              "Aplique compressa fria protegida por pano se houver inchaço."
-            ]
-          }
-        },
-        {
-          "id": "visible_blood_pus_foreign",
-          "question": "Você vê sangue, pus, rolha de cerúmen dura ou corpo estranho no ouvido?",
-          "rationale": "Critério de encaminhamento.",
-          "urgency": "urgent",
-          "on_true": {
-            "action": "ESCALATE",
-            "message": "⚠️ Achado no conduto: não introduza objetos; procure avaliação.",
-            "self_care": [
-              "Não tente remover objetos ou secreções com hastes.",
-              "Mantenha o ouvido seco e limpo apenas por fora.",
-              "Se sangrar, cubra levemente com gaze sem pressionar."
-            ]
-          }
-        },
-        {
-          "id": "asymmetric_loss",
-          "question": "A perda de audição é de um lado só ou mais forte em um ouvido?",
-          "rationale": "Assimetria é red flag.",
-          "urgency": "priority",
-          "on_true": {
-            "action": "ESCALATE",
-            "message": "⚠️ Perda auditiva assimétrica/unilateral: avaliação com otorrino.",
-            "self_care": [
-              "Evite exposição prolongada a ruídos altos.",
-              "Proteja o ouvido saudável em ambientes barulhentos.",
-              "Agende avaliação especializada."
-            ]
-          }
-        },
-        {
-          "id": "unilateral_pulsatile_tinnitus",
-          "question": "O zumbido é apenas de um lado ou pulsa como batimento?",
-          "rationale": "Zumbido unilateral/pulsátil é red flag.",
-          "urgency": "priority",
-          "on_true": {
-            "action": "ESCALATE",
-            "message": "⚠️ Zumbido unilateral/pulsátil: avaliação prioritária.",
-            "self_care": [
-              "Reduza cafeína, álcool e nicotina.",
-              "Evite ambientes muito silenciosos ou muito ruidosos.",
-              "Durma com a cabeça levemente elevada."
-            ]
-          }
-        },
-        {
-          "id": "poor_speech_disc",
-          "question": "Você entende mal a fala em um ouvido só, comparado ao outro?",
-          "rationale": "Discriminação assimétrica é red flag.",
-          "urgency": "priority",
-          "on_true": {
-            "action": "ESCALATE",
-            "message": "⚠️ Discriminação de fala assimétrica: avaliação com especialista.",
-            "self_care": [
-              "Converse em ambientes silenciosos.",
-              "Evite ruídos altos que possam piorar a audição.",
-              "Observe se há piora e procure avaliação."
-            ]
-          }
-        }
-      ],
-      "non_urgent_advice": {
-        "summary": [
-          "Evite introduzir hastes/objetos no ouvido.",
-          "Analgesia comum conforme rótulo, se necessário.",
-          "Manter ouvido seco se houve dor recente após exposição à água."
-        ],
-        "safety_net": [
-          "Febre alta, vômitos, piora da dor, nova secreção ou tontura intensa: procure atendimento.",
-          "Se audição piorar ou surgir zumbido unilateral, procure avaliação."
-        ]
-      }
+      ]
     },
     "nariz": {
-      "intake_examples": [
-        "nariz sangrando",
-        "sangramento que volta",
-        "sangra quando assoo",
-        "sangue escorrendo pela narina"
-      ],
+      "title": "Nariz",
       "dx": [
         {
           "name": "Rinossinusite viral",
-          "prior": 0.40,
-          "symptom_weights": { "rinorreia": 1.2, "obstrucao_nasal": 1.0, "pressao_facial": 0.4, "febre": 0.3 }
+          "prior": 0.4,
+          "symptom_weights": {
+            "rinorreia": 1.2,
+            "obstrucao_nasal": 1.0,
+            "pressao_facial": 0.4,
+            "febre": 0.3
+          },
+          "source": "AAFP; ABORL",
+          "modifiers": {
+            "duration_days": [
+              { "lte": 7, "boost": 0.15 }
+            ],
+            "fever_max_c": [
+              { "lte": 38.0, "boost": 0.05 }
+            ]
+          }
         },
         {
           "name": "Rinossinusite bacteriana",
-          "prior": 0.20,
-          "symptom_weights": { "pressao_facial": 1.0, "febre": 0.6, "rinorreia": 0.4 }
+          "prior": 0.2,
+          "symptom_weights": {
+            "pressao_facial": 1.0,
+            "rinorreia": 0.4,
+            "febre": 0.6
+          },
+          "source": "IDSA ABRS; AAFP Adult Sinusitis; ABORL 2022",
+          "modifiers": {
+            "duration_days": [
+              { "gte": 10, "boost": 0.25 }
+            ],
+            "trajectory": [
+              { "is": "dupla_piora", "boost": 0.30 }
+            ],
+            "fever_max_c": [
+              { "gte": 39.0, "boost": 0.15 }
+            ]
+          }
         },
         {
           "name": "Rinite alérgica",
-          "prior": 0.30,
-          "symptom_weights": { "rinorreia": 1.0, "obstrucao_nasal": 0.9, "hiposmia": 0.3, "prurido_otico": 0.2 }
+          "prior": 0.3,
+          "symptom_weights": {
+            "rinorreia": 1.0,
+            "obstrucao_nasal": 0.9,
+            "hiposmia": 0.3
+          },
+          "source": "AAFP 2023 Allergic Rhinitis"
         },
         {
           "name": "Outra/Necessita Exame",
-          "prior": 0.10,
-          "symptom_weights": {}
+          "prior": 0.1,
+          "symptom_weights": {},
+          "source": "—"
         }
-      ],
-      "red_flags": [
-        {
-          "id": "epistaxis_uncontrolled",
-          "question": "O sangramento NÃO parou após compressão firme por 10–15 minutos (e, se disponível, vasoconstritor)?",
-          "rationale": "Falha de controle com medidas iniciais exige avaliação presencial.",
-          "urgency": "urgent",
-          "on_true": {
-            "action": "ESCALATE",
-            "message": "⚠️ Epistaxe não controlada: procure atendimento presencial.",
-            "self_care": [
-              "Sente-se e incline a cabeça levemente para frente.",
-              "Comprima a parte macia do nariz por 10 a 15 minutos sem soltar.",
-              "Aplique gelo no dorso do nariz e evite assoar."
-            ]
-          }
-        }
-      ],
-      "non_urgent_advice": {
-        "summary": [
-          "Para epistaxe leve: sente-se, incline a cabeça levemente à frente e comprima a parte macia do nariz por 10–15 min sem soltar.",
-          "Evite assoar e esforço físico por 24–48 h após cessar o sangramento."
-        ],
-        "safety_net": [
-          "Se recidivar repetidamente, se for volumoso ou se usa anticoagulantes, procure avaliação.",
-          "Palidez intensa, tontura, desmaio, batimentos muito acelerados: pronto atendimento."
-        ]
-      }
+      ]
     },
     "garganta": {
-      "intake_examples": [
-        "dor ao engolir",
-        "garganta muito inflamada",
-        "pus nas amígdalas",
-        "rouquidão e sensação de bolo na garganta"
-      ],
+      "title": "Garganta",
       "dx": [
         {
           "name": "Faringoamigdalite viral",
           "prior": 0.45,
-          "symptom_weights": { "odinofagia": 1.3, "febre": 0.6, "tosse": 0.4 }
+          "symptom_weights": {
+            "odinofagia": 1.3,
+            "febre": 0.6,
+            "tosse": 0.4
+          },
+          "source": "AAFP; CDC",
+          "modifiers": {
+            "negations": { "tosse": 0.05 },
+            "fever_max_c": [
+              { "lte": 38.5, "boost": 0.05 }
+            ]
+          }
         },
         {
           "name": "Amigdalite estreptocócica",
-          "prior": 0.20,
-          "symptom_weights": { "odinofagia": 1.2, "febre": 0.8 }
+          "prior": 0.2,
+          "symptom_weights": {
+            "odinofagia": 1.2,
+            "febre": 0.8
+          },
+          "source": "IDSA Pharyngitis; MDCalc McIsaac",
+          "modifiers": {
+            "age": [
+              { "lte": 14, "boost": 0.15 },
+              { "gte": 45, "boost": -0.10 }
+            ],
+            "trajectory": [
+              { "is": "piorando", "min_duration_days": 3, "boost": 0.10 }
+            ],
+            "negations": { "tosse": -0.20 }
+          }
         },
         {
           "name": "DRGE/LPR",
           "prior": 0.15,
-          "symptom_weights": { "globus": 0.9, "halitose": 0.6, "disfagia": 0.5 }
+          "symptom_weights": {
+            "globus": 0.9,
+            "halitose": 0.6,
+            "disfagia": 0.5
+          },
+          "source": "Consensos DRGE/LPR"
         },
         {
           "name": "Outra/Necessita Exame",
-          "prior": 0.20,
-          "symptom_weights": {}
+          "prior": 0.2,
+          "symptom_weights": {},
+          "source": "—"
         }
-      ],
-      "red_flags": [
-        "Dificuldade para respirar ou salivação excessiva",
-        "Trismo, voz abafada ou dor intensa unilateral",
-        "Sangue na saliva, perda de peso inexplicada, rouquidão > 3–4 semanas"
-      ],
-      "non_urgent_advice": [
-        "Gargarejos com água morna",
-        "Analgésicos/antitérmicos conforme orientação",
-        "Alimentação macia e hidratação"
       ]
     },
     "pescoco": {
-      "intake_examples": [
-        "caroço no pescoço",
-        "gânglio doloroso",
-        "dor após refeição na região salivar"
-      ],
+      "title": "Pescoço",
       "dx": [
         {
           "name": "Linfadenite reacional",
-          "prior": 0.50,
-          "symptom_weights": { "adenomegalia_cervical": 1.2, "febre": 0.6 }
+          "prior": 0.5,
+          "symptom_weights": {
+            "adenomegalia_cervical": 1.2,
+            "febre": 0.6
+          },
+          "source": "Consensos de linfonodomegalias",
+          "modifiers": {
+            "duration_days": [
+              { "lte": 21, "boost": 0.10 }
+            ],
+            "fever_max_c": [
+              { "gte": 38.0, "boost": 0.05 }
+            ]
+          }
         },
         {
           "name": "Sialadenite/sialolitíase",
-          "prior": 0.20,
-          "symptom_weights": { "dor_pos_refeicao": 1.1, "halitose": 0.5 }
+          "prior": 0.2,
+          "symptom_weights": {
+            "halitose": 0.5,
+            "disfagia": 0.3
+          },
+          "source": "Diretrizes sialadenite"
         },
         {
           "name": "Outra/Necessita Exame",
-          "prior": 0.30,
-          "symptom_weights": {}
+          "prior": 0.3,
+          "symptom_weights": {},
+          "source": "—"
         }
-      ],
-      "red_flags": [
-        "Massa cervical endurecida, fixa ou com crescimento rápido",
-        "Sinais sistêmicos (perda de peso, suores noturnos)",
-        "Dor intensa com rubor/edema importante"
-      ],
-      "non_urgent_advice": [
-        "Observar evolução por alguns dias se quadro leve",
-        "Analgesia simples se doloroso",
-        "Procurar avaliação se persistir/alargar"
       ]
     },
     "laringe": {
-      "intake_examples": [
-        "rouquidão faz semanas",
-        "engasgo para engolir",
-        "dor para engolir",
-        "sensação de algo preso na garganta",
-        "falta de ar e ruído ao respirar"
-      ],
-      "red_flags": [
-        {
-          "id": "airway_obstruction",
-          "question": "Você tem falta de ar importante, ruído para respirar (estridor) ou engasgos com dificuldade para respirar?",
-          "rationale": "Obstrução de via aérea exige avaliação imediata.",
-          "urgency": "immediate",
-          "on_true": {
-            "action": "ESCALATE",
-            "message": "🚑 Sinais de obstrução de via aérea: procure emergência agora.",
-            "self_care": [
-              "Sente-se ou mantenha posição que facilite a respiração.",
-              "Use inalador ou nebulização prescritos, se disponíveis.",
-              "Peça ajuda imediatamente e evite deitar."
-            ]
-          }
-        },
-        {
-          "id": "severe_dysphagia_aspiration",
-          "question": "Engolir líquidos ou alimentos provoca engasgos frequentes ou sensação de que 'vai para o pulmão'?",
-          "rationale": "Risco de aspiração/complicações.",
-          "urgency": "urgent",
-          "on_true": {
-            "action": "ESCALATE",
-            "message": "⚠️ Disfagia/aspiração: avaliação presencial prioritária.",
-            "self_care": [
-              "Suspenda alimentos e bebidas até avaliação.",
-              "Permaneça sentado e incline o tronco para frente se engasgar.",
-              "Peça ajuda de alguém próximo caso os engasgos se repitam."
-            ]
-          }
-        },
-        {
-          "id": "persistent_hoarseness",
-          "question": "Sua rouquidão persiste por várias semanas sem melhora?",
-          "rationale": "Red flag oncológica; precisa laringoscopia.",
-          "urgency": "priority",
-          "on_true": {
-            "action": "ESCALATE",
-            "message": "⚠️ Rouquidão persistente: agende avaliação para exame da laringe.",
-            "self_care": [
-              "Repouse a voz o máximo possível.",
-              "Evite fumar, álcool e ambientes com poeira.",
-              "Mantenha boa hidratação."
-            ]
-          }
-        },
-        {
-          "id": "suspected_malignancy",
-          "question": "Perda de peso sem explicação, ferida na boca que não cicatriza ou um 'caroço' no pescoço?",
-          "rationale": "Sinais de alerta para câncer de cabeça e pescoço.",
-          "urgency": "priority",
-          "on_true": {
-            "action": "ESCALATE",
-            "message": "⚠️ Sinais oncológicos: avaliação especializada prioritária.",
-            "self_care": [
-              "Anote os sintomas e sua duração.",
-              "Mantenha alimentação equilibrada e boa hidratação.",
-              "Evite tabaco e bebidas alcoólicas."
-            ]
-          }
-        }
-      ],
-      "non_urgent_advice": {
-        "summary": [
-          "Hidratação adequada e repouso vocal.",
-          "Evitar tabaco e álcool enquanto a voz estiver alterada."
-        ],
-        "safety_net": [
-          "Se a rouquidão passar de 3–4 semanas, se houver engasgos frequentes, sangue na saliva ou perda de peso: avaliação especializada.",
-          "Falta de ar: emergência."
-        ]
-      }
+      "title": "Laringe",
+      "dx": []
     }
   },
   "guidelines": {
-    "Febre": "Mantenha-se hidratado e procure avaliação se durar mais de 3 dias.",
-    "Tosse": "Beba água e evite ambientes com fumaça.",
-    "Dor de cabeça": "Descanse em local calmo; procure atendimento se intensa ou persistente.",
-    "Nariz entupido": "Use solução salina para aliviar o entupimento.",
-    "Coriza ou Catarro": "Hidrate-se e assoe o nariz suavemente.",
-    "Mau cheiro": "Pode indicar infecção; mantenha higiene e procure médico se persistente.",
-    "Redução do Olfato": "Evite substâncias irritantes; busque avaliação se não melhorar.",
-    "Redução do Paladar": "Mantenha alimentação leve; procure avaliação se persistente.",
-    "Pressão na face": "Inale vapor de água morna; busque atendimento se houver febre ou dor intensa.",
-    "Dor de Ouvido": "Evite molhar o ouvido e procure avaliação se não passar.",
-    "Sensação de ouvido tapado": "Evite introduzir objetos; procure se não aliviar.",
-    "Coceira no ouvido": "Não use cotonetes; mantenha o local seco.",
-    "Dificuldade de ouvir": "Evite ruídos altos; procure avaliação auditiva.",
-    "Zumbido": "Reduza cafeína e álcool; procure otorrino se persistente.",
-    "Tontura": "Sente-se ou deite-se até passar; se houver outros sintomas graves, procure emergência.",
-    "Sensação de Desmaio": "Deite-se e levante as pernas; se persistir, busque atendimento.",
-    "Dor de Garganta": "Faça gargarejos com água morna e sal; procure se houver pus ou febre alta.",
-    "Mau Hálito": "Mantenha boa higiene oral e hidratação.",
-    "Sensação de Bolo na garganta": "Evite alimentos irritantes; procure avaliação se persistente.",
-    "Dificuldade ou Desconforto para engolir": "Prefira alimentos macios e procure atendimento se dificultar alimentação.",
-    "Aumento dos gânglios do pescoço": "Observe se reduzem em alguns dias; se dolorosos ou persistentes, busque avaliação.",
-    "Roncos": "Tente dormir de lado e manter peso saudável."
+    "Febre": "Oriente hidratação, antitérmico se necessário; sinais de alarme exigem avaliação presencial.",
+    "Tosse": "Tosse produtiva com piora e febre alta pode indicar infecção bacteriana; avaliar duração e trajetória.",
+    "Dor de cabeça": "Avaliar sinais neurológicos, rigidez de nuca, febre alta persistente.",
+    "Coriza": "Geralmente viral; acompanhar evolução por 3–7 dias.",
+    "Dor de ouvido": "Se início súbito com febre e/ou otorreia, pensar em OMA; toque no pavilhão doloroso sugere OE."
   },
   "logic": {
+    "answer_options": ["Sim", "Não", "Não sei"],
+    "ask_batch_size": 3,
+    "pain_escalation_threshold": 8,
+    "symptom_aliases": {
+      "febre": ["febre"],
+      "tosse": ["tosse"],
+      "odinofagia": ["dor_de_garganta"],
+      "obstrucao_nasal": ["nariz_entupido"],
+      "rinorreia": ["coriza", "catarro"],
+      "pressao_facial": ["pressao_na_face"],
+      "hiposmia": ["reducao_olfato"],
+      "disgeusia": ["reducao_paladar"],
+      "otalgia": ["dor_de_ouvido"],
+      "hipoacusia": ["dificuldade_de_ouvir"],
+      "zumbido": ["zumbido"],
+      "tontura": ["tontura"],
+      "adenomegalia_cervical": ["linfonodos_cervicais"],
+      "halitose": ["mau_halito"],
+      "disfagia": ["disfagia"],
+      "otorreia": ["secrecao_otica"]
+    },
     "domain_classification_keywords": {
-      "ouvido": [
-        "ouvido",
-        "orelha",
-        "otalgia",
-        "zumbido",
-        "hipoacusia",
-        "tontura",
-        "vertigem",
-        "otorréia",
-        "ouço pior",
-        "dor de ouvido",
-        "dor no ouvido",
-        "audicao",
-        "otite",
-        "/ouvid[oa]\\s*dor/"
-      ],
-      "nariz": [
-        "nariz",
-        "epistaxe",
-        "sangramento",
-        "congestão",
-        "coriza",
-        "rinite",
-        "sinusite",
-        "pressão na face",
-        "nariz entupido",
-        "sangue no nariz",
-        "narina",
-        "espirro",
-        "/sangrament[oa].*nariz/"
-      ],
       "garganta": [
         "garganta",
         "faringe",
@@ -816,6 +334,36 @@
         "dor ao engolir",
         "rouquidão"
       ],
+      "laringe": [
+        "rouquidão",
+        "disfonia",
+        "garganta",
+        "engolir",
+        "disfagia",
+        "l aryng",
+        "voz cansada"
+      ],
+      "nariz": [
+        "nariz",
+        "coriza",
+        "rinite",
+        "rinossinusite",
+        "sinusite",
+        "obstrução nasal",
+        "pressão na face",
+        "epistaxe"
+      ],
+      "ouvido": [
+        "ouvido",
+        "otalgia",
+        "otite",
+        "tímpano",
+        "zumbido",
+        "otorreia",
+        "dor no ouvido",
+        "audicao",
+        "/ouvid[oa]\\s*dor/"
+      ],
       "pescoco": [
         "pescoço",
         "cervical",
@@ -823,50 +371,18 @@
         "nódulo",
         "caroço",
         "adenomegalia"
-      ],
-      "laringe": [
-        "rouquidão",
-        "disfonia",
-        "garganta",
-        "engolir",
-        "disfagia",
-        "globus",
-        "via aérea",
-        "estridor",
-        "roncos",
-        "voz fraca",
-        "dor de garganta",
-        "engasgo",
-        "/dificuldade.*falar/"
       ]
     },
-    "pain_escalation_threshold": 8,
-    "ask_batch_size": 3,
-    "answer_options": [
-      "Sim",
-      "Não",
-      "Não sei"
-    ],
     "escalation_levels": {
-      "immediate": {
-        "label": "Emergência",
-        "cta": "Procure pronto atendimento AGORA."
-      },
-      "urgent": {
-        "label": "Urgente",
-        "cta": "Procure atendimento presencial/teleconsulta prioritária."
-      },
-      "priority": {
-        "label": "Prioritário",
-        "cta": "Agende avaliação com prioridade."
-      }
+      "immediate": { "label": "Emergência", "cta": "Procure pronto atendimento AGORA." },
+      "urgent":    { "label": "Urgente",    "cta": "Procure atendimento presencial/teleconsulta prioritária." },
+      "priority":  { "label": "Prioritário","cta": "Agende avaliação com prioridade." }
     }
   },
   "ui_texts": {
-    "footer_legal": "Este assistente faz triagem inicial e não substitui consulta médica.",
-    "global_escalation_prefix": "⚠️ Sinal de alerta identificado:",
-    "advice_prefix": "Orientações gerais:",
-    "safety_net_prefix": "Procure atendimento se:",
-    "schedule_cta": "Deseja agendar uma avaliação?"
+    "consent_ok": "Obrigado. Vamos começar.",
+    "symptom_picker_hint": "Selecione o que você está sentindo. Você pode também descrever em texto.",
+    "flags_hint": "Sinais de alerta ajudam a decidir a prioridade de atendimento.",
+    "report_footer": "Este material apoia a tomada de decisão clínica, não a substitui."
   }
 }
