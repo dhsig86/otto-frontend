@@ -1,7 +1,7 @@
 /*
   ROBOTTO — Tele-ENT Triage Orchestrator
   File: robotto.js
-  Version: 2.1.4 (2025-08-19)
+  Version: 2.2.0 (2025-08-19)
 */
 (function () {
   const CONFIG = {
@@ -13,38 +13,71 @@
     STREAM: false,
     MAX_TOKENS: 700,
     TEMPERATURE: 1,
-    VERSION: "2.1.4",
   };
 
-  const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
-  const uniq = (arr) => Array.from(new Set(Array.isArray(arr) ? arr : []));
-  const hasText = (s) => typeof s === "string" && s.trim().length > 0;
+  // ----------------- Utils -----------------
+  const clamp = (x, a, b) => Math.max(a, Math.min(b, Number.isFinite(+x) ? +x : a));
+  const norm = (s) => (s || "").toLowerCase();
+
+  function withTimeout(promise, ms, label = "timeout") {
+    let t;
+    const timeout = new Promise((_, rej) => t = setTimeout(() => rej(new Error(label)), ms));
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
+  }
 
   function inferDomain(payload) {
-    const t = `${payload.freeText || ""} ${(payload.symptoms || []).join(" ")}`.toLowerCase();
-    if (/ouvid|otalg|otite|timp/.test(t)) return "ouvido";
-    if (/nariz|rin(i|o)|sinus|seio.*face|rinossinus/.test(t)) return "nariz";
-    if (/gargant|faring|larin|amigdal/.test(t)) return "garganta";
+    const t = norm(payload?.freeText || "");
+    if (/ouvid|otalg|otit|timp|orelha/.test(t)) return "ouvido";
+    if (/nariz|rin(i|o)|sinus|seio.*face|rinossinus|epistax/.test(t)) return "nariz";
+    if (/gargant|faring|larin|amigdal|odinofag/.test(t)) return "garganta";
     if (/pescoc|cervic|linfon|n[oó]dul|caro[cç]o/.test(t)) return "pescoco";
-    return "ouvido";
+    return payload?.domain || "garganta";
   }
 
-  const REDFLAG_PATTERNS = [
-    /falta\s*de\s*ar|dispneia/i,
-    /dificuldade\s*para\s*respirar|estridor/i,
-    /dor\s*muito\s*intensa|insuport[aá]vel/i,
-    /sangramento\s*(volumoso|intenso|ativo)/i,
-    /rigidez\s*de\s*pesc[oó]co|meningismo/i,
-    /confus[aã]o|desmaio|alter[aç][ã]o neurol[oó]gica/i,
-  ];
-  function redFlagsFromText(text) {
-    const t = String(text || "");
-    const hits = [];
-    for (const re of REDFLAG_PATTERNS) if (re.test(t)) hits.push(re.source);
-    return { any: hits.length > 0, patterns: hits };
+  function parseDurationDaysFrom(payload) {
+    // Preferir parser já feito no diagnostics/app-ui
+    if (payload?.extras?.parsed?.durationDays != null) return payload.extras.parsed.durationDays;
+
+    const d = String(payload?.duration || payload?.duration_norm || "").toLowerCase();
+    const mISO = d.match(/^p(?:(\d+)w)?(?:(\d+)d)?$/i) || d.match(/^pt(\d+)h$/i) || d.match(/^p(\d+)d$/i);
+    if (mISO) {
+      if (mISO[1] && mISO[2]) return (+mISO[1])*7 + (+mISO[2]);
+      if (/^pt/i.test(d)) return Math.max(0.04, (+mISO[1])/24);
+      if (/^p(\d+)d$/i.test(d)) return +mISO[1];
+    }
+    const m = d.match(/(\d+)\s*(h|hora|horas|d|dia|dias|sem|semanas|m|mes|meses)/);
+    if (m) {
+      const n = +m[1];
+      const u = m[2];
+      if (/^h/.test(u)) return Math.max(0.04, n/24);
+      if (/^d|dia/.test(u)) return n;
+      if (/^sem/.test(u)) return n*7;
+      if (/^m|mes/.test(u)) return n*30;
+    }
+    return null;
   }
 
-  const CACHE = { rules: null, rulesUrl: null, last: null, llmAborter: null };
+  function detectConflict(payload) {
+    const ft = norm(payload?.freeText || "");
+    const semTosse = /\bsem\s+tosse\b/.test(ft) || /\bnega\s+tosse\b/.test(ft);
+    const semFebre = /\bsem\s+febre\b/.test(ft) || /\bafebril\b/.test(ft) || /\bnega\s+febre\b/.test(ft);
+    const sx = new Set((payload?.symptoms || []).map(norm));
+    if (semTosse && sx.has("tosse")) return true;
+    if (semFebre && sx.has("febre")) return true;
+    return false;
+  }
+
+  function isLowTextImpact(local) {
+    // pouco gap + confiança razoável + houve texto livre informado
+    const noGaps = !local.gaps || ((local.gaps.questions || []).length === 0 && (local.gaps.unknownSx || []).length === 0);
+    const hasText = !!(local.payload && typeof local.payload.freeText === "string" && local.payload.freeText.trim().length > 0);
+    // se top1 mudou pouco entre execuções não temos histórico aqui;
+    // heurística: confiança >= 0.60 sem gaps e com texto => pode valer segunda opinião do backend
+    return noGaps && local.confidence >= 0.60 && hasText;
+  }
+
+  // ----------------- Rules cache -----------------
+  const CACHE = { rules: null, rulesUrl: null, last: null };
 
   async function loadRules(url) {
     if (!url) return {};
@@ -62,6 +95,26 @@
     }
   }
 
+  // ----------------- Local engine wrapper -----------------
+  function runLocal(payload, rules) {
+    // garante domínio e duration_days para o motor local (se ele quiser usar)
+    const enriched = { ...payload };
+    if (!enriched.domain) enriched.domain = inferDomain(enriched);
+    const dd = parseDurationDaysFrom(enriched);
+    if (dd != null && !enriched.duration_days) enriched.duration_days = dd;
+
+    // diagnostics.js expõe window.localDifferentials(payload, rules)
+    if (typeof window.localDifferentials !== "function") {
+      // fallback por priors (mantém compat)
+      return localByPriors(enriched, rules);
+    }
+    const local = window.localDifferentials(enriched, rules) || { list: [], confidence: 0.5 };
+    // normalize e anexar payload para decisões subsequentes
+    local.top3 = (local.list || []).map(d => ({ dx: d.dx, norm: d.probability ?? d.norm ?? 0 }));
+    local.payload = enriched;
+    return local;
+  }
+
   function localByPriors(payload, rules) {
     const domain = payload.domain || inferDomain(payload);
     const dxList = (rules?.domains?.[domain]?.dx) || [];
@@ -71,124 +124,117 @@
       scored.push({ dx: dx?.name || dx?.dx || "dx", norm: prior });
     }
     scored.sort((a, b) => b.norm - a.norm);
-    const confidence = scored[0]?.norm || 0;
+    const top3 = scored.slice(0, 3);
+    const confidence = clamp(top3[0]?.norm ?? 0.5, 0, 1);
     return {
-      payload,
-      list: scored,
-      top3: scored.slice(0, 3),
+      list: top3.map(i => ({ dx: i.dx, probability: i.norm })),
+      top3,
       confidence,
-      redFlags: redFlagsFromText(payload.freeText),
-      gaps: { questions: [], unknownSx: [] },
-      rulesVersion: rules?.version || "unknown",
+      payload
     };
   }
 
-  function localEngine(payload, rules) {
-    const p = { ...(payload || {}) };
-    p.freeText = p.freeText || "";
-    p.symptoms = uniq(p.symptoms);
-    if (!p.domain) p.domain = inferDomain(p);
-
-    if (typeof window.localDifferentials === "function") {
-      try {
-        const out = window.localDifferentials(p, rules) || {};
-        const list = Array.isArray(out.list) ? out.list : [];
-        const top3 = list.slice(0, 3).map(d => ({
-          dx: d.dx,
-          norm: clamp(Number(d.probability || 0), 0, 1)
-        }));
-        const confidence = clamp(Number(out.confidence || top3[0]?.norm || 0), 0, 1);
-        const gaps = out.gaps && typeof out.gaps === "object"
-          ? { questions: uniq(out.gaps.questions || []), unknownSx: uniq(out.gaps.unknownSx || []) }
-          : { questions: [], unknownSx: [] };
-        const redFlags = out.redFlags || redFlagsFromText(p.freeText);
-        return { payload: p, list, top3, confidence, gaps, redFlags, rulesVersion: rules?.version || "unknown" };
-      } catch (e) {
-        console.warn("diagnostics.localDifferentials falhou — usando priors. Erro:", e);
-      }
-    }
-    return localByPriors(p, rules);
-  }
-
+  // ----------------- Backend call -----------------
   async function callLLMBackendForTriage(payload) {
-    if (CACHE.llmAborter) {
-      try { CACHE.llmAborter.abort('superseded'); } catch {}
-    }
-    const aborter = new AbortController();
-    CACHE.llmAborter = aborter;
-
-    const url = `${CONFIG.BACKEND_API_URL}${CONFIG.ENDPOINT}`;
+    const duration_days = parseDurationDaysFrom(payload);
     const body = {
+      model_hint: CONFIG.MODEL_HINT,
+      stream: CONFIG.STREAM,
+      max_tokens: CONFIG.MAX_TOKENS,
+      temperature: CONFIG.TEMPERATURE,
+
+      // clínico
       free_text: payload.freeText || "",
       age: payload.age ?? null,
       sex: payload.sex ?? null,
-      duration: payload.duration ?? null,
+      duration_days: duration_days ?? null,
+      trajectory: payload.trajectory ?? payload?.extras?.parsed?.trajectory ?? null,
+      fever_max_c: payload.fever_max_c ?? payload?.extras?.parsed?.feverMaxC ?? null,
+
+      // contexto
+      domain: payload.domain || inferDomain(payload),
       symptoms: payload.symptoms || [],
       comorbidities: payload.comorbidities || [],
       medications: payload.medications || [],
-      red_flags_reported: payload.red_flags_reported || [],
+      red_flags_reported: payload.red_flags_reported || []
     };
 
+    const url = (CONFIG.BACKEND_API_URL || "").replace(/\/+$/, "") + CONFIG.ENDPOINT;
+    const req = fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
     try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: aborter.signal,
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status} em ${url}`);
-      return await res.json();
-    } catch (err) {
-      if (err && err.name === "AbortError") {
-        const reason = (aborter.signal && aborter.signal.reason) || "";
-        if (reason === "superseded") return { _aborted: true };
+      const res = await withTimeout(req, CONFIG.TIMEOUT_MS, "backend-timeout");
+      if (!res.ok) throw new Error(`backend ${res.status}`);
+      const json = await res.json();
+      // contrato esperado: {differentials:[{dx, probability, rationale}], next_steps:[], care_level, red_flags:[], safety_note, references?:[]}
+      // saneamento
+      if (Array.isArray(json?.differentials)) {
+        json.differentials = json.differentials.map(d => ({
+          dx: d.dx,
+          probability: d.probability ?? d.prob ?? 0,
+          rationale: d.rationale || d.reason || null
+        }));
       }
-      console.warn("Backend error:", err);
-      return { ok: false, error: String(err) };
-    } finally {
-      if (CACHE.llmAborter === aborter) CACHE.llmAborter = null;
+      return json;
+    } catch (e) {
+      console.warn("backend error:", e);
+      return { _error: true, message: String(e) };
     }
   }
 
-  async function run(payload, options = {}) {
-    const { rulesUrl, forceLLM = false } = options;
+  // ----------------- Orchestrator -----------------
+  async function run(payload, opts = {}) {
+    const options = Object.assign({ rulesUrl: null, forceLLM: false }, opts);
+    const rules = await loadRules(options.rulesUrl);
 
-    const rules = await loadRules(rulesUrl);
-    const local = localEngine(payload, rules);
+    // 1) Motor local
+    const local = runLocal(payload || {}, rules);
 
+    // 2) Critérios para acionar backend
+    const conflict = detectConflict(local.payload);
+    const lowImpact = isLowTextImpact(local);
     const needLLM =
-      forceLLM ||
-      local.confidence < CONFIG.CONFIDENCE_THRESHOLD ||
+      options.forceLLM ||
+      (local.confidence < CONFIG.CONFIDENCE_THRESHOLD) ||
       (local.gaps?.unknownSx?.length > 0) ||
-      (local.redFlags?.any);
+      (local.redFlags?.any) ||
+      lowImpact ||
+      conflict;
 
+    // 3) Backend
     let backendResp = null;
     if (needLLM && CONFIG.BACKEND_API_URL?.startsWith("http")) {
       backendResp = await callLLMBackendForTriage(local.payload);
     }
 
-    const result = { ok: true, local, backend: backendResp };
+    // 4) Resultado final
+    const result = {
+      ok: true,
+      local,
+      backend: backendResp,
+      meta: {
+        used_backend: !!backendResp,
+        reasons: {
+          low_confidence: local.confidence < CONFIG.CONFIDENCE_THRESHOLD,
+          unknown_sx: (local.gaps?.unknownSx || []).length > 0,
+          red_flags: !!local.redFlags?.any,
+          low_text_impact: lowImpact,
+          conflict
+        }
+      }
+    };
     CACHE.last = result;
     return result;
   }
 
   function last() { return CACHE.last; }
   function setConfig(partial) { Object.assign(CONFIG, partial || {}); }
-  window.ROBOTTO = { run, loadRules, setConfig, last };
 
-  if (window && window.location && /localhost|127\.0\.0\.1/.test(window.location.host)) {
-    (async () => {
-      try {
-        const demoPayload = {
-          domain: null, age: 28, sex: "F", duration: "2 dias",
-          symptoms: ["febre", "dor_de_ouvido"],
-          freeText: "dor que piora ao deitar. Sem tontura."
-        };
-        const demo = await run(demoPayload, { rulesUrl: "./rules_otorrino.json", forceLLM: false });
-        console.debug("ROBOTTO demo result:", demo);
-      } catch (e) {
-        console.warn("ROBOTTO self-test warning:", e);
-      }
-    })();
-  }
+  // expose
+  window.ROBOTTO = { run, loadRules, setConfig, last };
 })();
+// -----------------------------
+// ROBOTTO v2.0+ (2025-08-19)
