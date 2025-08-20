@@ -1,699 +1,665 @@
-/* app-ui.js - Orquestração da UI do OTTO (flow, perguntas, cards e integração com diagnostics/robotto)
-   Blueprint aplicado: máquina de estados, pergunta ativa única, gating de cálculo e cartões substituíveis.
-   Autor: você 💙
+/* app-ui.js — OTTO (Tarefa 1: UX fluida + Orquestração)
+   - Fluxo: Consentimento → Mini-intake (idade/sexo) → Prompt único (“escreva seus sintomas ou selecione”) → (opcional) seleção de sintomas → (opcional) red flags
+   - Integração: agrega texto livre + sintomas + idade/sexo + features extraídas (duration/trajectory/febre) e envia ao ROBOTTO.run()
+   - Evita perguntas duplicadas (ex.: febre), reduz “barulho” visual e mostra quick replies úteis.
+   - Inclui novo sintoma: “rouquidao” (Rouco(a)/Sem voz).
 */
 
 (() => {
-  // -------------------------------
-  // Utilitários
-  // -------------------------------
-  const $ = (sel) => document.querySelector(sel);
-  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+  // --------------------------
+  // Config de ambiente/UI
+  // --------------------------
+  const RULES_URL = "rules_otorrino.json"; // mantemos para compat
+  const BACKEND_URL = (window.ROB_BACKEND_API_URL || "").replace(/\/+$/, "");
+  const ALWAYS_CALL_BACKEND = true; // preferimos o backend sempre (ROBOTO também decide, mas aqui inclinamos)
+  const MAX_DIFFS_SHOWN = 3;
 
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const clamp01 = (v) => Math.max(0, Math.min(1, v));
-
-  const formatPct = (p) => `${Math.round(p * 100)}%`;
-
-  const deepClone = (o) => JSON.parse(JSON.stringify(o || {}));
-
-  const hash = (obj) => {
-    try { return btoa(unescape(encodeURIComponent(JSON.stringify(obj)))).slice(0, 32); }
-    catch { return String(Date.now()); }
-  };
-
-  // -------------------------------
-  // Catálogos (síntomas e red flags)
-  // -------------------------------
-  const SYMPTOM_OPTIONS = [
-    { id: "febre", label: "Febre" },
-    { id: "tosse", label: "Tosse" },
-    { id: "dor_de_cabeca", label: "Dor de cabeça" },
-    { id: "nariz_entupido", label: "Nariz entupido" },
-    { id: "coriza", label: "Coriza ou Catarro" },
-    { id: "mau_cheiro", label: "Mau cheiro" },
-    { id: "dor_de_garganta", label: "Dor de garganta" },
-    { id: "linfonodos_cervicais", label: "Ínguas no pescoço" },
-    { id: "otalgia", label: "Dor de ouvido" },
-    { id: "otorreia", label: "Secreção no ouvido" },
-    { id: "hipoacusia", label: "Dificuldade de ouvir" },
-    { id: "plenitude_auricular", label: "Plenitude/pressão no ouvido" },
-    { id: "tontura", label: "Tontura/Vertigem" },
-    { id: "pressao_na_face", label: "Pressão/dor na face" },
-    { id: "espirros", label: "Espirros" },
-    { id: "prurido_nasal", label: "Coceira no nariz" },
-    { id: "redu_olfato", label: "Redução do olfato" },
-    { id: "redu_paladar", label: "Redução do paladar" },
+  // Sintomas exibidos (labels em PT-BR, chaves usadas no engine)
+  const SYMPTOMS_UI = [
+    { key: "dor_de_garganta", label: "Dor de garganta" },
+    { key: "sem_tosse", label: "Sem tosse" },
+    { key: "tosse", label: "Tosse" },
+    { key: "linfonodos_cervicais", label: "Ínguas/pescoço doloroso" },
+    { key: "placas_amigdalas", label: "Placas/Exsudato nas amígdalas" },
+    { key: "dor_de_ouvido", label: "Dor de ouvido" },
+    { key: "otorreia", label: "Secreção no ouvido" },
+    { key: "hipoacusia", label: "Perda de audição" },
+    { key: "tinnitus", label: "Zumbido" },
+    { key: "tontura", label: "Tontura/Vertigem" },
+    { key: "nariz_entupido", label: "Nariz entupido" },
+    { key: "coriza", label: "Coriza" },
+    { key: "mau_cheiro", label: "Secreção com mau cheiro" },
+    { key: "dor_de_cabeca", label: "Dor de cabeça" },
+    { key: "rouquidao", label: "Rouco(a)/Sem voz" } // NOVO
   ];
 
-  const FLAG_OPTIONS = [
-    { id: "dispneia", label: "Falta de ar / dificuldade para respirar" },
-    { id: "dor_insuportavel", label: "Dor muito intensa / insuportável" },
-    { id: "sangramento_volumoso", label: "Sangramento volumoso" },
-    { id: "rigidez_pescoco", label: "Rigidez de pescoço" },
-    { id: "turvacao_visual", label: "Turvação visual súbita" },
-    { id: "palpitacao", label: "Palpitação" },
-    { id: "desmaio", label: "Sensação de desmaio" },
+  // Red flags que podemos perguntar UMA vez se o usuário aceitar
+  const FLAGS_UI = [
+    { key: "disfagia_importante", label: "Dificuldade importante para engolir" },
+    { key: "sinais_respiratorios", label: "Dificuldade para respirar/estridor" },
+    { key: "sangramento_persistente", label: "Sangramento persistente" },
+    { key: "rigidez_pescoco", label: "Rigidez de pescoço" },
+    { key: "febre_alta_persistente", label: "Febre alta persistente (>39 °C)" },
+    { key: "sinais_neurologicos", label: "Sinais neurológicos (fraqueza, assimetria, confusão)" },
   ];
 
-  // -------------------------------
-  // Estado global
-  // -------------------------------
+  // --------------------------
+  // State principal
+  // --------------------------
   const state = {
-    ui: {
-      flow: "CONSENT", // CONSENT → MINI_INTAKE → COLLECT_SYMPTOMS → COLLECT_FLAGS → ASKING → READY_TO_SCORE → SHOWING_RESULT → DONE
-      asking: null,    // { id, text, options?, kind? }
-      lastResult: null, // último resultado renderizado (local/LLM)
-      lastHash: null,   // hash do último ctx que calculamos
-      lastLLMHash: null,// hash do último ctx enviado ao LLM
-      progress: 0,
-    },
-    ctx: {
-      // Contexto canônico para diagnostics/LLM
+    rulesUrl: RULES_URL,
+    backendUrl: BACKEND_URL,
+    consented: false,
+    askedFlagsOnce: false,      // só perguntar red flags uma vez por sessão
+    flagsChecked: false,        // se o usuário já abriu o modal de flags
+    lastShownFlagsHash: "",     // evitar repetição de mensagens de flags
+    lastShownDiffKey: "",       // evitar repetição de blocos iguais
+    payload: {
+      // intake
       age: null,
-      sex: null, // "M" | "F" | "OUTRO"
+      sex: null,               // "M" | "F" | "OUTRO"
+      // sinais e contexto
       symptoms: [],
-      redFlags: [],
+      red_flags_reported: [],
+      comorbidities: [],
+      medications: [],
+      domain: null,            // inferido no ROBOTTO (opcional setar)
+      // NL
       freeText: "",
-      timeline: { dur_days: null, trend: null }, // trend: "piorando" | "melhorando" | "iguais" | null
-      fever: { hasFever: null, maxC: null },
-      domainHint: null, // "garganta"|"nariz"|"ouvido"|"pescoço"|"laringe"|null
-      lastCompute: { engine: null, hash: null },
-    },
-  };
-
-  // -------------------------------
-  // Referências DOM
-  // -------------------------------
-  const els = {
-    consent: $("#consent"),
-    lgpdCheckbox: $("#lgpd-checkbox"),
-    startBtn: $("#start-btn"),
-
-    miniIntake: $("#mini-intake"),
-    miniForm: $("#mini-intake-form"),
-    miniAge: $("#mini-age"),
-    miniSkip: $("#mini-intake-skip"),
-
-    symptomOverlay: $("#symptom-overlay"),
-    symptomForm: $("#symptom-form"),
-    symptomOptions: $("#symptom-options"),
-    symptomSkip: $("#skip-symptoms"),
-
-    flagOverlay: $("#flag-overlay"),
-    flagForm: $("#flag-form"),
-    flagOptions: $("#flag-options"),
-    noFlags: $("#no-flags"),
-
-    chat: $("#messages"),
-    progress: $("#progress"),
-    inputForm: $("#input-form"),
-    userInput: $("#user-input"),
-    reviewSymptomsBtn: $("#review-symptoms"),
-    quickReplies: $("#quick-replies"),
-
-    resetBtn: $("#reset-btn"),
-    themeToggle: $("#theme-toggle"),
-  };
-
-  // -------------------------------
-  // Render helpers (chat/cards)
-  // -------------------------------
-  function botBubble(html, opts = {}) {
-    const wrap = document.createElement("div");
-    wrap.className = "flex gap-3";
-
-    const avatar = document.createElement("div");
-    avatar.innerHTML = `<img src="assets/otto-rounded.png" alt="OTTO" class="h-7 w-7 rounded-full ring-2 ring-sky-500/50 select-none" draggable="false"/>`;
-    const bubble = document.createElement("div");
-    bubble.className = "rounded-lg bg-white p-3 text-sm shadow dark:bg-gray-800";
-    bubble.innerHTML = html;
-
-    if (opts.id) wrap.dataset.cardId = opts.id;
-    wrap.appendChild(avatar);
-    wrap.appendChild(bubble);
-    return wrap;
-  }
-
-  function userBubble(text) {
-    const wrap = document.createElement("div");
-    wrap.className = "flex justify-end";
-    const bubble = document.createElement("div");
-    bubble.className = "max-w-[80%] rounded-lg bg-sky-600 p-3 text-sm text-white shadow";
-    bubble.textContent = text;
-    wrap.appendChild(bubble);
-    return wrap;
-  }
-
-  function appendMessage(el) {
-    els.chat.appendChild(el);
-    requestAnimationFrame(() => {
-      els.chat.scrollTop = els.chat.scrollHeight + 1000;
-    });
-  }
-
-  function replaceOrAppendCard(type, html) {
-    // type: 'flags' | 'dx' | 'question'
-    // Atualiza cartão existente (data-card-id) ou adiciona novo
-    const selector = `[data-card-id="${type}"]`;
-    let card = els.chat.querySelector(selector);
-    const node = botBubble(html, { id: type });
-    if (card) {
-      els.chat.replaceChild(node, card);
-    } else {
-      appendMessage(node);
+      // extras parseados localmente
+      extras: {
+        parsed: {
+          durationDays: null,
+          trajectory: null,      // "piorando" | "melhorando" | "flutuante" ...
+          feverMaxC: null        // número (Celsius)
+        }
+      }
     }
+  };
+
+  // --------------------------
+  // Helpers de UI
+  // --------------------------
+  const $ = (sel) => document.querySelector(sel);
+  const messagesEl = $("#messages");
+  const quickEl = $("#quick-replies");
+  const inputEl = $("#user-input");
+
+  function addMessage(role, html) {
+    const wrap = document.createElement("div");
+    const base = "max-w-[85%] rounded px-3 py-2 text-sm shadow";
+    if (role === "user") {
+      wrap.className = "flex justify-end";
+      wrap.innerHTML = `<div class="${base} bg-blue-600 text-white">${html}</div>`;
+    } else {
+      wrap.className = "flex justify-start";
+      wrap.innerHTML = `<div class="${base} bg-white text-gray-900 dark:bg-gray-800 dark:text-gray-100">${html}</div>`;
+    }
+    messagesEl.appendChild(wrap);
+    messagesEl.parentElement.scrollTop = messagesEl.parentElement.scrollHeight;
   }
 
-  function clearQuestionCard() {
-    const q = els.chat.querySelector('[data-card-id="question"]');
-    if (q) q.remove();
+  let typingNode = null;
+  function showTyping() {
+    hideTyping();
+    typingNode = document.createElement("div");
+    typingNode.className = "flex justify-start";
+    typingNode.innerHTML = `
+      <div class="max-w-[85%] rounded px-3 py-2 text-sm shadow bg-white text-gray-900 dark:bg-gray-800 dark:text-gray-100">
+        <span class="inline-flex items-center gap-2">
+          <span>OTTO está analisando</span>
+          <span class="inline-flex gap-1">
+            <span style="animation: blink 1.2s infinite">.</span>
+            <span style="animation: blink 1.2s .2s infinite">.</span>
+            <span style="animation: blink 1.2s .4s infinite">.</span>
+          </span>
+        </span>
+      </div>`;
+    messagesEl.appendChild(typingNode);
+    messagesEl.parentElement.scrollTop = messagesEl.parentElement.scrollHeight;
+  }
+  function hideTyping() {
+    if (typingNode && typingNode.parentNode) typingNode.parentNode.removeChild(typingNode);
+    typingNode = null;
   }
 
-  function setProgress(p) {
-    state.ui.progress = clamp01(p);
-    if (els.progress) els.progress.value = state.ui.progress;
-  }
-
-  // -------------------------------
-  // Overlays (show/hide & build lists)
-  // -------------------------------
-  function showOverlay(id, show) {
-    const el = typeof id === "string" ? $(id) : id;
-    if (!el) return;
-    el.classList.toggle("hidden", !show);
-    el.classList.toggle("flex", show);
-  }
-
-  function buildOptionsList(container, items, groupName) {
-    container.innerHTML = "";
-    items.forEach((it) => {
-      const id = `${groupName}-${it.id}`;
-      const row = document.createElement("label");
-      row.className = "flex items-center gap-3";
-      row.innerHTML = `
-        <input type="checkbox" id="${id}" data-id="${it.id}" class="h-4 w-4">
-        <span>${it.label}</span>
-      `;
-      container.appendChild(row);
-    });
-  }
-
-  // -------------------------------
-  // Quick replies (para pergunta ativa)
-  // -------------------------------
   function setQuickReplies(items) {
-    els.quickReplies.innerHTML = "";
-    items.forEach((opt) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "rounded-full border px-3 py-1 text-sm dark:border-gray-600 dark:bg-gray-700";
-      btn.textContent = opt.label;
-      btn.dataset.value = opt.value;
-      btn.addEventListener("click", () => {
-        handleAnswer(opt.value, opt.label);
+    // items: [{text, onClick}] — evita flood/duplicações
+    quickEl.innerHTML = "";
+    (items || []).forEach((it) => {
+      const b = document.createElement("button");
+      b.className = "rounded-full border px-3 py-1 text-xs hover:bg-gray-100 dark:hover:bg-gray-800";
+      b.textContent = it.text;
+      b.addEventListener("click", (e) => {
+        e.preventDefault();
+        if (typeof it.onClick === "function") it.onClick();
       });
-      els.quickReplies.appendChild(btn);
+      quickEl.appendChild(b);
     });
+    quickEl.classList.toggle("hidden", quickEl.children.length === 0);
   }
+  function hideQuickReplies() { setQuickReplies([]); }
 
-  function hideQuickReplies() {
-    els.quickReplies.innerHTML = "";
+  // --------------------------
+  // Extração simples de NL
+  // --------------------------
+  function parseDurationDaysFromText(text) {
+    if (!text) return null;
+    const t = text.toLowerCase();
+    // dias
+    let m = t.match(/(\d+)\s*(dia|dias|d)\b/);
+    if (m) return parseInt(m[1], 10);
+    // semanas
+    m = t.match(/(\d+)\s*(semana|semanas|sem)\b/);
+    if (m) return parseInt(m[1], 10) * 7;
+    // meses → estimativa (30d)
+    m = t.match(/(\d+)\s*(mes|mês|meses|m)\b/);
+    if (m) return parseInt(m[1], 10) * 30;
+    return null;
   }
-
-  // -------------------------------
-  // Máquina de estados / eventos
-  // -------------------------------
-  function dispatch(event, payload = {}) {
-    switch (event) {
-      case "CONSENT_OK":
-        state.ui.flow = "MINI_INTAKE";
-        showOverlay(els.consent, false);
-        showOverlay(els.miniIntake, true);
-        break;
-
-      case "MINI_INTAKE_DONE": {
-        showOverlay(els.miniIntake, false);
-        mergeContext({ age: payload.age || null, sex: payload.sex || null });
-        state.ui.flow = "COLLECT_SYMPTOMS";
-        setProgress(0.25);
-
-        appendMessage(botBubble(
-          `<p>Olá! Eu sou o OTTO. Você pode escrever livremente seus sintomas ou usar o botão <em>Revisar sintomas</em>. Ambos funcionam juntos. 😊</p>`
-        ));
-        appendMessage(botBubble(
-          `<p>Assim que você descrever ou marcar alguns sintomas, eu sigo com perguntas rápidas e vou calcular as hipóteses.</p>`
-        ));
-        break;
-      }
-
-      case "OPEN_SYMPTOM_PICKER":
-        buildOptionsList(els.symptomOptions, SYMPTOM_OPTIONS, "sym");
-        // pré-seleciona os já escolhidos
-        state.ctx.symptoms.forEach((sid) => {
-          const cb = $(`#sym-${CSS.escape(sid)}`);
-          if (cb) cb.checked = true;
-        });
-        showOverlay(els.symptomOverlay, true);
-        break;
-
-      case "SYMPTOMS_SELECTED": {
-        showOverlay(els.symptomOverlay, false);
-        const selected = $$("#symptom-options input[type='checkbox']:checked").map((el) => el.dataset.id);
-        // regra: se marcou "febre" no picker, setar hasFever=true (sem duplicar pergunta)
-        const hasFever = selected.includes("febre");
-        mergeContext({
-          symptoms: Array.from(new Set(selected)),
-          fever: { ...state.ctx.fever, hasFever: hasFever ? true : state.ctx.fever.hasFever }
-        });
-        if (state.ui.flow === "COLLECT_SYMPTOMS") state.ui.flow = "COLLECT_FLAGS";
-        // Convida a confirmar sinais de alerta
-        appendMessage(botBubble(`<p>Obrigado. Agora, marque se há algum sinal de alerta importante.</p>`));
-        dispatch("OPEN_FLAG_PICKER");
-        break;
-      }
-
-      case "OPEN_FLAG_PICKER":
-        buildOptionsList(els.flagOptions, FLAG_OPTIONS, "flag");
-        els.noFlags.checked = state.ctx.redFlags.length === 0;
-        // pré-seleciona
-        state.ctx.redFlags.forEach((fid) => {
-          const cb = $(`#flag-${CSS.escape(fid)}`);
-          if (cb) cb.checked = true;
-        });
-        showOverlay(els.flagOverlay, true);
-        break;
-
-      case "FLAGS_SELECTED": {
-        showOverlay(els.flagOverlay, false);
-        const none = els.noFlags.checked;
-        const flags = none ? [] : $$("#flag-options input[type='checkbox']:checked").map(el => el.dataset.id);
-        mergeContext({ redFlags: flags });
-        // Ready para cálculo
-        state.ui.flow = "READY_TO_SCORE";
-        maybeCompute(); // dispara cálculo com gating
-        break;
-      }
-
-      case "TEXT_SUBMITTED": {
-        // adiciona no chat
-        appendMessage(userBubble(payload.text));
-        // mescla freeText e roda parser para preencher timeline/fever/etc
-        mergeFreeText(payload.text);
-        // se estiver perguntando algo e a pergunta requer resposta de múltipla escolha,
-        // não tentaremos interpretar o texto como resposta automática agora.
-        maybeCompute();
-        break;
-      }
-
-      case "ASK": {
-        // Mostra somente UMA pergunta ativa e quick replies
-        state.ui.asking = payload; // { id, text, options? }
-        state.ui.flow = "ASKING";
-        const opts = (payload.options && payload.options.length)
-          ? payload.options.map((o) => ({ label: o, value: o }))
-          : [{ label: "Sim", value: "sim" }, { label: "Não", value: "nao" }, { label: "Não sei", value: "nao_sei" }];
-
-        replaceOrAppendCard("question", `<p><strong>Pergunta rápida:</strong> ${payload.text}</p>`);
-        setQuickReplies(opts);
-        break;
-      }
-
-      case "ANSWERED": {
-        // payload: { qid, value, label }
-        hideQuickReplies();
-        clearQuestionCard();
-        state.ui.asking = null;
-        state.ui.flow = "READY_TO_SCORE";
-        appendMessage(userBubble(payload.label || String(payload.value)));
-        // aplica no contexto
-        applyAnswerToContext(payload.qid, payload.value);
-        setProgress(0.7);
-        maybeCompute();
-        break;
-      }
-
-      case "RESET":
-        location.reload();
-        break;
-
-      default:
-        // no-op
-        break;
+  function parseTrajectoryFromText(text) {
+    if (!text) return null;
+    const t = text.toLowerCase();
+    if (/\bpiora|piorando|agravando|agravou\b/.test(t)) return "piorando";
+    if (/\bmelhor|melhorando|aliviando|aliviou\b/.test(t)) return "melhorando";
+    if (/\boscil|flutu|vai e volta|epis[oó]d/i.test(t)) return "flutuante";
+    return null;
+  }
+  function parseFeverMaxCFromText(text) {
+    if (!text) return null;
+    const t = text.toLowerCase();
+    // “38.5”, “38,5”, “38º”, “38 °C”
+    const m = t.match(/(\d{2}(?:[.,]\d)?)\s*(?:°c|ºc|c\b|graus|º)?/i);
+    if (m) {
+      const n = parseFloat(String(m[1]).replace(",", "."));
+      if (!isNaN(n) && n >= 35 && n <= 42) return n;
     }
+    if (/\bfebr[ei]|calafrio|febr[ei]l\b/.test(t)) return 38.0; // heurística fraca
+    return null;
   }
 
-  // -------------------------------
-  // Context helpers
-  // -------------------------------
-  function mergeContext(partial) {
-    state.ctx = {
-      ...state.ctx,
-      ...deepClone(partial),
-      // Mescla de objetos filhos
-      timeline: { ...state.ctx.timeline, ...(partial.timeline || {}) },
-      fever: { ...state.ctx.fever, ...(partial.fever || {}) },
+  // Constrói extras.parsed combinando texto livre atual
+  function buildParsedExtras() {
+    const ft = state.payload.freeText || "";
+    const p = state.payload.extras?.parsed || {};
+    const merged = {
+      durationDays: p.durationDays ?? parseDurationDaysFromText(ft),
+      trajectory: p.trajectory ?? parseTrajectoryFromText(ft),
+      feverMaxC: p.feverMaxC ?? parseFeverMaxCFromText(ft),
     };
+    state.payload.extras = { parsed: merged };
   }
 
-  function mergeFreeText(text) {
-    // Anexa ao freeText e tenta parsear via diagnostics (se disponível)
-    const joined = (state.ctx.freeText ? state.ctx.freeText + "\n" : "") + text;
-    mergeContext({ freeText: joined });
-
-    if (window.DIAGNOSTICS && typeof window.DIAGNOSTICS.parseAndMerge === "function") {
-      try {
-        const updated = window.DIAGNOSTICS.parseAndMerge(deepClone(state.ctx), text);
-        mergeContext(updated);
-      } catch (e) {
-        console.warn("parseAndMerge falhou:", e);
-      }
-    } else {
-      // fallback mínimo: detectar febre em texto
-      if (/febre/i.test(text) && state.ctx.fever.hasFever === null) {
-        mergeContext({ fever: { ...state.ctx.fever, hasFever: true } });
-      }
-      const mDur = text.match(/(\d+)\s*(dias?|semanas?)/i);
-      if (mDur) {
-        const n = parseInt(mDur[1], 10);
-        const unit = (mDur[2] || "").toLowerCase();
-        const days = /semana/.test(unit) ? n * 7 : n;
-        mergeContext({ timeline: { ...state.ctx.timeline, dur_days: days } });
-      }
-      if (/\bpior(a|ando)\b/i.test(text)) mergeContext({ timeline: { ...state.ctx.timeline, trend: "piorando" } });
-      if (/\bmelhor(a|ando)\b/i.test(text)) mergeContext({ timeline: { ...state.ctx.timeline, trend: "melhorando" } });
-    }
+  // --------------------------
+  // UI: Overlays (sintomas/flags)
+  // --------------------------
+  function openOverlay(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.remove("hidden");
+    el.classList.add("flex");
+  }
+  function closeOverlay(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.add("hidden");
+    el.classList.remove("flex");
   }
 
-  function applyAnswerToContext(qid, value) {
-    switch (qid) {
-      case "fever_today":
-        mergeContext({ fever: { ...state.ctx.fever, hasFever: value === "sim" ? true : value === "nao" ? false : state.ctx.fever.hasFever } });
-        break;
-      case "fever_max":
-        // value esperado como string ">=38" | "<38" | "nao_sei"
-        if (value === ">=38") mergeContext({ fever: { ...state.ctx.fever, maxC: 38.0 } });
-        else if (value === "<38") mergeContext({ fever: { ...state.ctx.fever, maxC: 37.5 } });
-        break;
-      case "trend":
-        // "piorando"|"melhorando"|"iguais"
-        mergeContext({ timeline: { ...state.ctx.timeline, trend: value } });
-        break;
-      case "onset_vertigo":
-        // "subita" | "episodios"
-        mergeContext({ domainHint: "ouvido" });
-        break;
-      default:
-        // outras perguntas futuras…
-        break;
-    }
-  }
-
-  // -------------------------------
-  // Cálculo (gating + local + LLM)
-  // -------------------------------
-  function shouldCompute() {
-    const { age, sex, symptoms, freeText, redFlags } = state.ctx;
-    if (!age || !sex) return false;
-    const hasPayload = (symptoms && symptoms.length > 0) || (freeText && freeText.trim().length >= 8) || (redFlags && redFlags.length > 0);
-    if (!hasPayload) return false;
-    if (state.ui.asking) return false; // aguarde resposta
-    return true;
-  }
-
-  async function maybeCompute() {
-    if (!shouldCompute()) return;
-
-    const computeHash = hash({
-      age: state.ctx.age,
-      sex: state.ctx.sex,
-      symptoms: state.ctx.symptoms,
-      redFlags: state.ctx.redFlags,
-      freeText: state.ctx.freeText,
-      timeline: state.ctx.timeline,
-      fever: state.ctx.fever,
+  function renderSymptomsChecklist() {
+    const box = $("#symptom-options");
+    if (!box) return;
+    box.innerHTML = "";
+    SYMPTOMS_UI.forEach((s) => {
+      const id = `sx_${s.key}`;
+      const wrap = document.createElement("label");
+      wrap.className = "flex items-center gap-2";
+      wrap.innerHTML = `
+        <input type="checkbox" id="${id}" value="${s.key}" />
+        <span>${s.label}</span>`;
+      box.appendChild(wrap);
     });
-
-    if (state.ui.lastHash === computeHash) return; // evita recomputar idêntico
-    state.ui.lastHash = computeHash;
-
-    // 1) Local score primeiro
-    let local = null;
-    if (window.DIAGNOSTICS && typeof window.DIAGNOSTICS.localScore === "function") {
-      try {
-        local = window.DIAGNOSTICS.localScore(deepClone(state.ctx));
-      } catch (e) {
-        console.warn("localScore falhou:", e);
-      }
-    }
-    if (!local) {
-      local = {
-        differentials: [{ dx: "IVAS viral", probability: 0.6, rationale: "Estimativa local" }],
-        red_flags: [],
-        next_steps: ["Hidratação, analgésico/antitérmico se necessário."],
-        care_level: "routine",
-        askNext: null,
-        needsLLM: true,
-      };
-    }
-
-    // 1a) Render flags e diagnósticos (cartões substituíveis)
-    renderFlagsCard(local.red_flags || []);
-    renderDxCard(local);
-
-    // 1b) Se existe pergunta de follow-up, pergunte e pare aqui
-    if (local.askNext && local.askNext.id) {
-      dispatch("ASK", local.askNext);
-      return;
-    }
-
-    // 2) Chamar LLM se fizer sentido (balanced) e não for repetição
-    if (shouldCallLLM(local)) {
-      await refineWithLLM(local);
-    } else {
-      state.ui.flow = "SHOWING_RESULT";
-      state.ui.lastResult = local;
-      setProgress(1);
-    }
   }
 
-  function shouldCallLLM(local) {
-    // Política "balanced": chama se local marcou needsLLM, ou se não há sintomas fortes, ou se há conflito
-    const h = hash({
-      h: state.ui.lastLLMHash,
-      age: state.ctx.age,
-      sex: state.ctx.sex,
-      symptoms: state.ctx.symptoms,
-      redFlags: state.ctx.redFlags,
-      timeline: state.ctx.timeline,
-      fever: state.ctx.fever,
-      freeTextLen: (state.ctx.freeText || "").length,
+  function renderFlagsChecklist() {
+    const box = $("#flag-options");
+    if (!box) return;
+    box.innerHTML = "";
+    FLAGS_UI.forEach((f) => {
+      const id = `rf_${f.key}`;
+      const wrap = document.createElement("label");
+      wrap.className = "flex items-center gap-2";
+      wrap.innerHTML = `
+        <input type="checkbox" id="${id}" value="${f.key}" />
+        <span>${f.label}</span>`;
+      box.appendChild(wrap);
     });
-    const newHash = h.slice(0, 28);
-    if (state.ui.lastLLMHash === newHash) return false;
-
-    const needs = !!(local && local.needsLLM);
-    const lowSignal = (state.ctx.symptoms || []).length < 2 && (state.ctx.freeText || "").length < 40;
-    const conflicting = (local && local.differentials && local.differentials.length >= 3 && Math.abs(local.differentials[0].probability - local.differentials[1].probability) < 0.08);
-
-    return needs || lowSignal || conflicting;
   }
 
-  async function refineWithLLM(localAlreadyRendered) {
-    // mostra spinner fino no cartão de dx
-    addSpinnerToDx(true);
+  function getSelectedValues(containerSel) {
+    const cont = $(containerSel);
+    if (!cont) return [];
+    const vals = [];
+    cont.querySelectorAll("input[type=checkbox]").forEach((inp) => {
+      if (inp.checked) vals.push(inp.value);
+    });
+    return vals;
+  }
 
-    const llmPayload = deepClone(state.ctx);
-    let llmResult = null;
+  // --------------------------
+  // Integração com ROBOTTO
+  // --------------------------
+  async function computeAndRespond({ force = false } = {}) {
     try {
-      if (window.ROBOTTO && typeof window.ROBOTTO.callLLM === "function") {
-        llmResult = await window.ROBOTTO.callLLM(llmPayload);
+      hideQuickReplies();
+
+      // Só roda se houver algo para processar (texto ou sintomas) OU forçado
+      const hasAnyInfo =
+        (state.payload.freeText && state.payload.freeText.trim().length > 0) ||
+        (state.payload.symptoms && state.payload.symptoms.length > 0) ||
+        force;
+
+      if (!hasAnyInfo) {
+        suggestStart();
+        return;
+      }
+
+      buildParsedExtras(); // garante extras.parsed
+
+      // Configurar orchestrator para “balanced” (sempre que possível)
+      try {
+        if (window.ROBOTTO && typeof window.ROBOTTO.setConfig === "function") {
+          window.ROBOTTO.setConfig({
+            CALL_LLM_POLICY: ALWAYS_CALL_BACKEND ? "balanced" : "smart",
+            LOCAL_CONF_THRESHOLD: 0.72,
+            HYBRID_BACKEND_WEIGHT: 0.6,
+            BACKEND_API_URL: state.backendUrl || undefined
+          });
+        }
+      } catch (e) {
+        console.warn("setConfig falhou (segue padrão do robotto.js):", e);
+      }
+
+      showTyping();
+      let out;
+      try {
+        out = await window.ROBOTTO.run(state.payload, {
+          rulesUrl: state.rulesUrl,
+          forceLLM: ALWAYS_CALL_BACKEND ? false : false // mantemos decisão interna, mas política já setada
+        });
+      } catch (e) {
+        console.warn("run com rules falhou; tentando sem rules:", e);
+        out = await window.ROBOTTO.run(state.payload, { forceLLM: false });
+      }
+      hideTyping();
+
+      renderFromResult(out);
+      ensureQuickReplies(out);
+
+    } catch (err) {
+      hideTyping();
+      console.error("computeAndRespond error:", err);
+      addMessage("bot", "Houve um problema técnico. Tente novamente em instantes.");
+    }
+  }
+
+  function compactDiffList(list) {
+    if (!Array.isArray(list)) return [];
+    // normaliza para {dx, probability, rationale?}
+    return list
+      .filter(Boolean)
+      .map((x) => ({
+        dx: String(x.dx || x.name || x.label || "").trim(),
+        probability: typeof x.probability === "number" ? x.probability :
+          (typeof x.prob === "number" ? x.prob : null),
+        rationale: x.rationale || x.explain || x.whyFor?.join("; ")
+      }))
+      .filter((x) => x.dx);
+  }
+
+  function formatDiffBlock(list) {
+    const top = compactDiffList(list).slice(0, MAX_DIFFS_SHOWN);
+    if (!top.length) return "";
+    const lines = top.map((d, i) => {
+      const pct = d.probability != null ? Math.round(d.probability * 100) : null;
+      return `• ${d.dx}${pct != null ? ` (${pct}%)` : ""}`;
+    });
+    return lines.join("<br/>");
+  }
+
+  function hashStr(s) {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) {
+      h = (h << 5) - h + s.charCodeAt(i);
+      h |= 0;
+    }
+    return String(h);
+  }
+
+  function renderFromResult(out) {
+    // Seleção do “final” e saneamento
+    const finalList =
+      out?.final?.differentials ||
+      out?.backend?.differentials ||
+      out?.local?.list ||
+      [];
+
+    const diffBlock = formatDiffBlock(finalList);
+    const care = out?.final?.care_level || out?.backend?.care_level || out?.care_level || null;
+
+    // Evita repetir o mesmo bloco se nada mudou
+    const key = hashStr(JSON.stringify({
+      d: finalList.map((x) => [x.dx, x.probability]),
+      care
+    }));
+    if (key && key === state.lastShownDiffKey) {
+      // não repete — ainda assim podemos atualizar sugestões/flags
+    } else {
+      state.lastShownDiffKey = key;
+      // Mensagem enxuta: diferenciais + próximos passos (se houver)
+      let html = "";
+      if (diffBlock) {
+        html += `<div class="font-semibold mb-1">Hipóteses principais</div>${diffBlock}`;
+      }
+      const nexts = out?.final?.next_steps || out?.backend?.next_steps || [];
+      if (nexts.length) {
+        const uniq = [...new Set(nexts.map((s) => String(s).trim()).filter(Boolean))].slice(0, 4);
+        if (uniq.length) {
+          html += `<div class="mt-2 font-semibold">Próximos passos</div><div class="text-sm">${uniq.map(s => `• ${s}`).join("<br/>")}</div>`;
+        }
+      }
+      if (!html) html = "Vamos continuar. Conte-me mais sobre seus sintomas (ou abra a caixa para selecionar).";
+
+      addMessage("bot", html);
+    }
+
+    // Flags do backend (não repetir “nenhum” e não duplicar)
+    const flags = Array.from(new Set([...(out?.final?.red_flags || out?.backend?.red_flags || [])]));
+    const flagsHash = hashStr(flags.join("|"));
+    if (flags.length && flagsHash !== state.lastShownFlagsHash) {
+      state.lastShownFlagsHash = flagsHash;
+      addMessage("bot", `<span class="font-semibold">Sinais de alerta mencionados pelo motor:</span><br/>${flags.map(f => `• ${f}`).join("<br/>")}`);
+    }
+  }
+
+  function ensureQuickReplies(out) {
+    const items = [];
+
+    // 1) Ações de UI úteis
+    items.push({
+      text: "➕ Adicionar sintomas",
+      onClick: () => {
+        openOverlay("symptom-overlay");
+      }
+    });
+
+    if (!state.askedFlagsOnce) {
+      items.push({
+        text: "🚩 Checar sinais de alerta",
+        onClick: () => {
+          state.askedFlagsOnce = true;
+          openOverlay("flag-overlay");
+        }
+      });
+    }
+
+    // 2) Sugestões do backend (deduplicadas e curtas)
+    const qs = (out?.backend?.query_suggestions?.questions || []).map(q => String(q).trim()).filter(Boolean);
+    const seen = new Set();
+    qs.forEach((q) => {
+      const norm = q.toLowerCase()
+        .replace(/\s+/g, " ")
+        .replace(/[?!.]+$/g, "");
+      // filtrar perguntas sobre febre se já extraímos febre do texto
+      if (/febre|temperatura|graus/.test(norm)) {
+        if (state.payload.extras?.parsed?.feverMaxC != null) return; // já temos
+      }
+      if (seen.has(norm)) return;
+      seen.add(norm);
+      items.push({
+        text: q.length > 48 ? q.slice(0, 46) + "…" : q,
+        onClick: () => {
+          // Deixa o usuário responder livremente no input (experiência mais natural)
+          addMessage("bot", q);
+          inputEl.focus();
+        }
+      });
+    });
+
+    // 3) Gerar relatório
+    items.push({
+      text: "📝 Gerar relatório",
+      onClick: () => handleExport()
+    });
+
+    setQuickReplies(items);
+  }
+
+  // --------------------------
+  // Relatório (HTML simples → impressão/PDF do navegador)
+  // --------------------------
+  function handleExport() {
+    try {
+      const last = (window.ROBOTTO && window.ROBOTTO.last && window.ROBOTTO.last()) || null;
+      const out = last || {};
+      const diffs = compactDiffList(out?.final?.differentials || out?.backend?.differentials || out?.local?.list || []);
+      const care = out?.final?.care_level || out?.backend?.care_level || "routine";
+      const flags = Array.from(new Set(out?.final?.red_flags || out?.backend?.red_flags || []));
+      const steps = out?.final?.next_steps || out?.backend?.next_steps || [];
+
+      let html = `<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:16px;max-width:800px;margin:0 auto">
+        <h1 style="margin:0 0 8px">Relatório de Triagem – OTTO</h1>
+        <div style="font-size:12px;color:#666;margin-bottom:16px">Este relatório é educativo e não substitui avaliação médica presencial.</div>
+        <hr/>
+        <h3>Dados informados</h3>
+        <ul>
+          <li><b>Idade/Sexo:</b> ${state.payload.age ?? "–"} / ${state.payload.sex ?? "–"}</li>
+          <li><b>Sintomas selecionados:</b> ${state.payload.symptoms.length ? state.payload.symptoms.join(", ") : "–"}</li>
+          <li><b>Texto livre:</b> ${state.payload.freeText ? state.payload.freeText : "–"}</li>
+          <li><b>Red flags reportadas:</b> ${state.payload.red_flags_reported.length ? state.payload.red_flags_reported.join(", ") : "–"}</li>
+          <li><b>Duração/Trajetória/Febre máx. (parseadas):</b> ${[
+            state.payload.extras?.parsed?.durationDays != null ? `${state.payload.extras.parsed.durationDays}d` : "–",
+            state.payload.extras?.parsed?.trajectory || "–",
+            state.payload.extras?.parsed?.feverMaxC != null ? `${state.payload.extras.parsed.feverMaxC} °C` : "–"
+          ].join(" / ")}</li>
+        </ul>
+        <h3>Hipóteses principais</h3>
+        <ol>${diffs.map(d => `<li>${d.dx}${d.probability != null ? ` (${Math.round(d.probability*100)}%)` : ""}</li>`).join("") || "<li>–</li>"}</ol>
+        <h3>Nível de cuidado</h3>
+        <p>${care}</p>
+        ${flags.length ? `<h3>Sinais de alerta</h3><ul>${flags.map(f => `<li>${f}</li>`).join("")}</ul>` : ""}
+        ${steps.length ? `<h3>Próximos passos</h3><ul>${steps.slice(0,6).map(s => `<li>${s}</li>`).join("")}</ul>` : ""}
+        ${out?.final?.references?.length ? `<h3>Referências</h3><ul style="font-size:12px;color:#555">${out.final.references.map(r => `<li>${r}</li>`).join("")}</ul>` : ""}
+        <hr/>
+        <div style="font-size:11px;color:#777">Gerado automaticamente por OTTO – Triagem ORL (educacional).</div>
+      </div>`;
+      const w = window.open("", "_blank");
+      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Relatório de Triagem</title></head><body>${html}</body></html>`);
+      w.document.close();
+      w.focus();
+      w.print();
+    } catch (e) {
+      console.error("export error:", e);
+      addMessage("bot", "Não consegui gerar o relatório agora. Tente novamente.");
+    }
+  }
+
+  // --------------------------
+  // Início orientado
+  // --------------------------
+  function suggestStart() {
+    const msg = `Pode <b>escrever em linguagem natural</b> o que está sentindo, e/ou <b>abrir a seleção de sintomas</b> (botão abaixo). O motor combinará suas respostas de forma inteligente.`;
+    addMessage("bot", msg);
+    setQuickReplies([
+      { text: "➕ Selecionar sintomas", onClick: () => openOverlay("symptom-overlay") }
+    ]);
+  }
+
+  // --------------------------
+  // Eventos: consentimento / mini-intake / sintomas / flags / chat
+  // --------------------------
+
+  // Consentimento
+  const consentEl = $("#consent");
+  const consentChk = $("#lgpd-checkbox");
+  const startBtn = $("#start-btn");
+  if (consentChk && startBtn) {
+    consentChk.addEventListener("change", () => {
+      startBtn.disabled = !consentChk.checked;
+      startBtn.classList.toggle("opacity-50", startBtn.disabled);
+    });
+    startBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      state.consented = true;
+      if (consentEl) consentEl.classList.add("hidden");
+      // abrir mini-intake
+      const mini = $("#mini-intake");
+      if (mini) { mini.classList.remove("hidden"); mini.classList.add("flex"); }
+    });
+  }
+
+  // Mini-intake (idade/sexo)
+  const miniForm = $("#mini-intake-form");
+  if (miniForm) {
+    miniForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const age = parseInt($("#mini-age").value, 10);
+      const sex = (document.querySelector("#mini-intake-form select")?.value || "").toUpperCase();
+      if (!Number.isFinite(age) || age < 0) {
+        addMessage("bot", "Idade inválida. Corrija e envie novamente.");
+        return;
+      }
+      state.payload.age = age;
+      state.payload.sex = sex || null;
+      closeOverlay("mini-intake");
+      addMessage("bot", "Obrigado. Agora, descreva seus sintomas em uma frase (ex.: “dor de garganta há 5 dias, piorando, sem tosse”) ou abra a caixa para selecionar itens.");
+      setQuickReplies([
+        { text: "➕ Selecionar sintomas", onClick: () => openOverlay("symptom-overlay") }
+      ]);
+    });
+  }
+
+  // Checklist de sintomas
+  renderSymptomsChecklist();
+  const sxForm = $("#symptom-form");
+  const sxSkip = $("#skip-symptoms");
+  if (sxForm) {
+    sxForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const sel = getSelectedValues("#symptom-options");
+      state.payload.symptoms = Array.from(new Set([...(state.payload.symptoms || []), ...sel]));
+      closeOverlay("symptom-overlay");
+
+      if (sel.length) {
+        addMessage("user", `Adicionei: ${sel.join(", ")}`);
+      }
+      await computeAndRespond({ force: true });
+    });
+  }
+  if (sxSkip) {
+    sxSkip.addEventListener("click", (e) => {
+      e.preventDefault();
+      closeOverlay("symptom-overlay");
+      // não força cálculo aqui: usuário pode preferir escrever primeiro
+      addMessage("bot", "Certo. Se preferir, descreva em texto o que está sentindo e seguirei com a análise.");
+    });
+  }
+
+  // Flags (uma vez, se o usuário quiser)
+  renderFlagsChecklist();
+  const flagForm = $("#flag-form");
+  const noFlagsBtn = $("#no-flags");
+  if (flagForm) {
+    flagForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const sel = getSelectedValues("#flag-options");
+      state.payload.red_flags_reported = Array.from(new Set([...(state.payload.red_flags_reported || []), ...sel]));
+      closeOverlay("flag-overlay");
+      if (sel.length) addMessage("user", `Sinais de alerta presentes: ${sel.join(", ")}`);
+      await computeAndRespond({ force: true });
+    });
+  }
+  if (noFlagsBtn) {
+    noFlagsBtn.addEventListener("click", async (e) => {
+      e.preventDefault();
+      state.payload.red_flags_reported = state.payload.red_flags_reported || [];
+      closeOverlay("flag-overlay");
+      addMessage("user", "Sem sinais de alerta.");
+      await computeAndRespond({ force: true });
+    });
+  }
+
+  // Chat: entrada livre
+  const form = $("#input-form");
+  if (form) {
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const msg = (inputEl.value || "").trim();
+      if (!msg) return;
+      inputEl.value = "";
+      addMessage("user", msg);
+      // agrega ao freeText
+      state.payload.freeText = (state.payload.freeText ? state.payload.freeText + " " : "") + msg;
+      await computeAndRespond();
+    });
+  }
+
+  // Botão “Revisar sintomas” (abre modal)
+  const reviewBtn = $("#review-symptoms");
+  if (reviewBtn) {
+    reviewBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      openOverlay("symptom-overlay");
+    });
+  }
+
+  // Ao carregar, definir configuração de orquestração padrão (caso o robotto.js já tenha inicializado)
+  window.addEventListener("load", () => {
+    try {
+      if (window.ROBOTTO && typeof window.ROBOTTO.setConfig === "function") {
+        window.ROBOTTO.setConfig({
+          BACKEND_API_URL: state.backendUrl || undefined,
+          CALL_LLM_POLICY: ALWAYS_CALL_BACKEND ? "balanced" : "smart",
+          LOCAL_CONF_THRESHOLD: 0.72,
+          HYBRID_BACKEND_WEIGHT: 0.6
+        });
       }
     } catch (e) {
-      console.warn("ROBOTTO.callLLM erro:", e);
-    }
-
-    addSpinnerToDx(false);
-
-    if (llmResult && llmResult.differentials) {
-      renderDxCard(llmResult, { fromLLM: true });
-      renderFlagsCard(llmResult.red_flags || []);
-      state.ui.flow = "SHOWING_RESULT";
-      state.ui.lastResult = llmResult;
-      state.ui.lastLLMHash = hash({
-        age: state.ctx.age, sex: state.ctx.sex, symptoms: state.ctx.symptoms,
-        redFlags: state.ctx.redFlags, timeline: state.ctx.timeline, fever: state.ctx.fever,
-        freeTextLen: (state.ctx.freeText || "").length
-      }).slice(0, 28);
-      setProgress(1);
-    } else {
-      // mantém local
-      state.ui.flow = "SHOWING_RESULT";
-      state.ui.lastResult = localAlreadyRendered || state.ui.lastResult;
-      setProgress(1);
-    }
-  }
-
-  // -------------------------------
-  // Cartões (flags, dx)
-  // -------------------------------
-  function renderFlagsCard(flags) {
-    if (!flags || flags.length === 0) {
-      // Limpa cartão se não houver flags
-      replaceOrAppendCard("flags", `<p><strong>Sinais de alerta:</strong> nenhum sinal de alerta informado.</p>`);
-      return;
-    }
-    const lis = flags.map((f) => `<li>${escapeHtml(f)}</li>`).join("");
-    replaceOrAppendCard("flags", `
-      <div>
-        <p><strong>⚠️ Sinais de alerta:</strong></p>
-        <ul class="mt-1 list-disc pl-5">${lis}</ul>
-      </div>
-    `);
-  }
-
-  function renderDxCard(result, opts = {}) {
-    const diffs = result.differentials || [];
-    const items = diffs.map(d => {
-      const pct = typeof d.probability === "number" ? formatPct(d.probability) : "";
-      const rationale = d.rationale ? ` — <em>${escapeHtml(d.rationale)}</em>` : "";
-      return `<li><strong>${escapeHtml(d.dx)}</strong> (${pct})${rationale}</li>`;
-    }).join("");
-
-    const care = result.care_level ? `<p class="mt-2"><strong>Nível de cuidado:</strong> ${escapeHtml(capitalizeCare(result.care_level))}</p>` : "";
-    const note = result.safety_note ? `<p class="mt-1 text-sm italic opacity-80">${escapeHtml(result.safety_note)}</p>` : "";
-
-    const refining = opts.fromLLM ? "" : `<span class="ml-2 text-xs opacity-70">${opts.refining ? "refinando…" : ""}</span>`;
-
-    replaceOrAppendCard("dx", `
-      <div>
-        <p class="font-semibold">Diagnósticos diferenciais:${refining}</p>
-        <ul class="mt-1 list-disc pl-5">${items}</ul>
-        ${care}
-        ${note}
-      </div>
-    `);
-  }
-
-  function addSpinnerToDx(on) {
-    const node = els.chat.querySelector('[data-card-id="dx"]');
-    if (!node) return;
-    const bubble = node.querySelector("div > p.font-semibold");
-    if (!bubble) return;
-    const old = bubble.querySelector(".mini-spin");
-    if (old) old.remove();
-    if (on) {
-      const span = document.createElement("span");
-      span.className = "mini-spin ml-2 inline-block h-3 w-3 animate-spin rounded-full border-2 border-sky-500 border-t-transparent align-middle";
-      bubble.appendChild(span);
-    }
-  }
-
-  function capitalizeCare(lvl) {
-    if (!lvl) return "";
-    const map = { emergency: "Emergência", urgency: "Urgência", routine: "Rotina" };
-    return map[lvl] || lvl;
-  }
-
-  function escapeHtml(s) {
-    return String(s || "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-  }
-
-  // -------------------------------
-  // Handlers de UI
-  // -------------------------------
-  els.startBtn?.addEventListener("click", () => {
-    if (!els.lgpdCheckbox.checked) return;
-    dispatch("CONSENT_OK");
-  });
-
-  els.miniForm?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const age = parseInt(els.miniAge.value, 10);
-    const sex = ($("input[name='mini-sex']:checked") || {}).value || null;
-    dispatch("MINI_INTAKE_DONE", { age, sex });
-  });
-
-  els.miniSkip?.addEventListener("click", () => {
-    dispatch("MINI_INTAKE_DONE", { age: null, sex: null });
-  });
-
-  // Abrir seleção de sintomas
-  els.reviewSymptomsBtn?.addEventListener("click", () => {
-    dispatch("OPEN_SYMPTOM_PICKER");
-  });
-
-  els.symptomForm?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    dispatch("SYMPTOMS_SELECTED");
-  });
-
-  els.symptomSkip?.addEventListener("click", () => {
-    showOverlay(els.symptomOverlay, false);
-    // Mesmo sem sintomas, podemos seguir (gating impedirá cálculo até ter conteúdo)
-    appendMessage(botBubble(`<p>Tudo bem! Você pode descrever em texto quando quiser.</p>`));
-    if (state.ui.flow === "COLLECT_SYMPTOMS") state.ui.flow = "COLLECT_FLAGS";
-    dispatch("OPEN_FLAG_PICKER");
-  });
-
-  // Red flags
-  els.noFlags?.addEventListener("change", () => {
-    if (els.noFlags.checked) {
-      $$("#flag-options input[type='checkbox']").forEach(cb => (cb.checked = false));
+      console.warn("setConfig on load falhou:", e);
     }
   });
 
-  els.flagForm?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    dispatch("FLAGS_SELECTED");
-  });
-
-  // Envio de texto livre
-  els.inputForm?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const text = (els.userInput.value || "").trim();
-    if (!text) return;
-    els.userInput.value = "";
-    dispatch("TEXT_SUBMITTED", { text });
-  });
-
-  // Reset e tema
-  els.resetBtn?.addEventListener("click", () => dispatch("RESET"));
-  els.themeToggle?.addEventListener("click", () => {
-    document.documentElement.classList.toggle("dark");
-    localStorage.setItem("otto-theme", document.documentElement.classList.contains("dark") ? "dark" : "light");
-  });
-  // restaura tema
-  (function restoreTheme(){
-    const saved = localStorage.getItem("otto-theme");
-    if (saved === "dark") document.documentElement.classList.add("dark");
-  })();
-
-  // Responder pergunta (quick reply)
-  async function handleAnswer(value, label) {
-    const q = state.ui.asking;
-    if (!q) return;
-    dispatch("ANSWERED", { qid: q.id, value, label });
+  // Reset rápido (se existir botão no header)
+  const resetBtn = $("#reset-btn");
+  if (resetBtn) {
+    resetBtn.addEventListener("click", () => {
+      // limpa chat e state parcial (mantém consentimento)
+      messagesEl.innerHTML = "";
+      hideQuickReplies();
+      state.askedFlagsOnce = false;
+      state.flagsChecked = false;
+      state.lastShownFlagsHash = "";
+      state.lastShownDiffKey = "";
+      state.payload.symptoms = [];
+      state.payload.red_flags_reported = [];
+      state.payload.freeText = "";
+      state.payload.extras = { parsed: { durationDays: null, trajectory: null, feverMaxC: null } };
+      addMessage("bot", "Reiniciado. Descreva seus sintomas ou abra a seleção para escolher itens.");
+      setQuickReplies([
+        { text: "➕ Selecionar sintomas", onClick: () => openOverlay("symptom-overlay") }
+      ]);
+    });
   }
 
-  // -------------------------------
-  // Boot inicial
-  // -------------------------------
-  async function boot() {
-    // popula listas (uma vez)
-    buildOptionsList(els.symptomOptions, SYMPTOM_OPTIONS, "sym");
-    buildOptionsList(els.flagOptions, FLAG_OPTIONS, "flag");
-
-    // mostra consent se ainda não aceitou nesta sessão
-    showOverlay(els.consent, true);
-
-    // mensagem inicial
-    appendMessage(botBubble(`<p>Bem-vindo(a)! Para começar, confirme o consentimento LGPD.</p>`));
+  // Tema (se existir #theme-toggle)
+  const themeBtn = $("#theme-toggle");
+  if (themeBtn) {
+    themeBtn.addEventListener("click", () => {
+      document.documentElement.classList.toggle("dark");
+    });
   }
 
-  boot();
-
+  // Mensagem de boas-vindas inicial (sem disparar cálculo)
+  addMessage("bot", "Olá! Eu sou o OTTO 👋. Antes de começar, confirme o consentimento e informe idade/sexo. Depois, você pode escrever seus sintomas em uma frase e/ou abrir a caixa de seleção para adicionar sintomas.");
+  setQuickReplies([]); // aguardando consentimento/mini-intake
 })();

@@ -1,7 +1,7 @@
 /*
   ROBOTTO — Tele-ENT Triage Orchestrator
   File: robotto.js
-  Version: 4.0.0 (2025-08-20)
+  Version: 4.0.1 (2025-08-20)
 
   Objetivos implementados (Blueprint):
   - Fluxo unificado: motor local primeiro; backend é chamado quando útil.
@@ -23,7 +23,8 @@
 (function () {
   // ----------------- Config -----------------
   const CONFIG = {
-    // Defina no index.html antes dos scripts:  window.ROB_BACKEND_API_URL = "https://SEU-APP.herokuapp.com";
+    // Defina no index.html antes dos scripts:
+    //   window.ROB_BACKEND_API_URL = "https://SEU-APP.herokuapp.com";
     BACKEND_API_URL: (window.ROB_BACKEND_API_URL || "https://<CONFIGURE-BACKEND>.example.com"),
     ENDPOINT: "/api/triage",
 
@@ -40,9 +41,7 @@
     TIMEOUT_MS: 120000
   };
 
-  // ----------------- System Prompt (PT-BR) — usado só para construir contexto (embed no free_text) -----------------
-  // Observação: não enviamos "system_prompt" como campo à API; incorporamos como metadado no próprio free_text
-  // para manter compatibilidade com o schema do backend.
+  // ----------------- System Prompt (PT-BR) — embed em free_text -----------------
   const SYSTEM_PROMPT_PT = `
 Você é o OTTO, um assistente de triagem em Otorrinolaringologia. Fale SEMPRE em português do Brasil.
 
@@ -121,8 +120,10 @@ Se vier apenas demografia, retorne uma pergunta única e objetiva para iniciar a
     return false;
   }
 
+  // >>> 2.1 — mudança de texto SEMPRE significativa
   function significantChange(prev, curr) {
     if (!prev) return true;
+
     const keysToTrack = [
       "domain", "age", "sex", "trajectory", "fever_max_c", "duration", "duration_norm",
       "pain_bucket", "painScale"
@@ -130,15 +131,19 @@ Se vier apenas demografia, retorne uma pergunta única e objetiva para iniciar a
     for (const k of keysToTrack) {
       if ((prev[k] ?? null) !== (curr[k] ?? null)) return true;
     }
+
+    // Texto: se mudou, já é significativo
     const tPrev = norm(prev.freeTextOriginal || prev.freeText || "");
     const tCurr = norm(curr.freeTextOriginal || curr.freeText || "");
-    if (Math.abs(tCurr.length - tPrev.length) > 12) return true;
+    if (tPrev !== tCurr) return true;
 
+    // Sintomas selecionados
     const a = new Set((prev.symptoms || []).map(norm));
     const b = new Set((curr.symptoms || []).map(norm));
     if (a.size !== b.size) return true;
     for (const x of b) if (!a.has(x)) return true;
 
+    // Red flags selecionadas
     const fa = new Set((prev.red_flags_reported || []).map(norm));
     const fb = new Set((curr.red_flags_reported || []).map(norm));
     if (fa.size !== fb.size) return true;
@@ -253,7 +258,7 @@ ${gaps}
     return userText ? `${userText}\n\n${ctx}` : ctx;
   }
 
-  // ----------------- Backend call (envia apenas campos aceitos pelo FastAPI) -----------------
+  // ----------------- Backend call (schema do FastAPI) -----------------
   async function callLLMBackendForTriage(payload, local) {
     const body = {
       free_text: buildAugmentedFreeText(payload, local),
@@ -320,6 +325,12 @@ ${gaps}
     if (conf < threshold) return true;
     if (policy === "gpt_preferred" && (hasSymptoms || hasText)) return true;
 
+    // >>> 2.2 — no modo "balanced", se o usuário digitou algo, libere LLM (exceto quando confiança ~1.0)
+    if (policy === "balanced" && hasText && (local?.confidence ?? 0) < 0.95) {
+      return true;
+    }
+
+    // Mudança relevante desde a última rodada?
     if (significantChange(CACHE.lastPayload, payload)) return true;
 
     return false;
@@ -373,13 +384,13 @@ ${gaps}
     const options = Object.assign({ rulesUrl: null, forceLLM: false }, opts);
     const rules = await loadRules(options.rulesUrl);
 
-    // 0) Sinaliza domínio se não vier
+    // 0) Domínio inferido se não vier
     if (!payload?.domain) payload = { ...payload, domain: inferDomain(payload || {}) };
 
     // 1) Motor local
     const local = runLocal(payload || {}, rules);
 
-    // 2) Gate: só demografia? devolve "deferir"
+    // 2) Gate: apenas demografia? devolve “deferir”
     const onlyDemo = isOnlyDemographics(local.payload);
     if (onlyDemo) {
       const resultDemo = {
