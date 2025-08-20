@@ -1,11 +1,5 @@
-// app-ui.js (v3 — mini-intake + parser + orchestration com red flags gate)
-// Este arquivo coordena a UI e orquestra o fluxo com ROBOTTO.run() e diagnostics.js v4.
-// Regras principais:
-//  1) Idade/sexo: coletados no mini-intake (ou no texto), salvos em state.payload.
-//  2) Sintomas: a UI ecoa os selecionados, mas NÃO calcula ainda.
-//  3) Cálculo só ocorre após o formulário de RED FLAGS ser submetido (gate de segurança).
-//  4) Texto livre sempre alimenta o parser clínico (duração/trajectória/Tmax/negações).
-//  5) Evita duplicar “Hipóteses iniciais” usando assinatura do último resultado renderizado.
+// app-ui.js (v4 — fluxo fluido: sintomas → flags uma vez, perguntas Sim/Não)
+// Coordena a UI e orquestra o fluxo com ROBOTTO.run() e diagnostics.js v4.
 
 (function () {
   // --------------------------
@@ -13,30 +7,33 @@
   // --------------------------
   const state = {
     consented: false,
-    flagsAnswered: false,          // gate: só calcula depois de responder red flags
-    askedSymptomsOnce: false,
-    lastRenderSig: null,           // evita duplicar render
+    flagsAnswered: false,          // flags respondidas pelo usuário
+    _flagsOpenedOnce: false,       // garante que overlay de flags abre no máx. 1 vez
+    askedSymptomsOnce: false,      // se já abrimos o checklist de sintomas
+    lastRenderSig: null,           // evita render duplicado
+    lastAskedQuestion: null,       // evita repetir a mesma pergunta Sim/Não
     payload: {
       domain: null,
       age: null,
       sex: null,                   // "M" | "F" | "OUTRO"
-      duration: null,              // string normalizada ("P5D" etc.)
-      duration_norm: null,         // idem (compat)
-      trajectory: null,            // "piorando" | "melhorando" | "estavel"
-      fever_max_c: null,           // número (ex.: 38.5)
+      duration: null,              // ISO: "P5D", "P2W", "P3M", "PT12H"
+      duration_norm: null,         // compat
+      trajectory: null,            // "piorando" | "melhorando" | "estavel" | "dupla_piora"
+      fever_max_c: null,           // número, ex.: 38.5
       pain_bucket: null,           // "leve" | "moderada" | "intensa"
       painScale: null,             // 0..10
       negations: [],
       symptoms: [],
       freeText: "",                // texto limpo (com negações tratadas)
-      freeTextOriginal: "",        // texto bruto acumulado do usuário
+      freeTextOriginal: "",        // texto bruto acumulado do usuário (histórico)
       comorbidities: [],
       medications: [],
       red_flags_reported: []
     },
     rulesUrl: "./rules_otorrino.json"
   };
-  // === Configura o ROBOTTO para esta sessão ===
+
+  // Opcional: reforçar política (também está no index.html; manter aqui é inofensivo)
   if (window.ROBOTTO?.setConfig) {
     window.ROBOTTO.setConfig({
       CALL_LLM_POLICY: "balanced",
@@ -44,6 +41,7 @@
       HYBRID_BACKEND_WEIGHT: 0.6
     });
   }
+
   // --------------------------
   // Catálogos (UI)
   // --------------------------
@@ -77,10 +75,10 @@
     { key: "falta_de_ar", label: "Falta de ar / dificuldade para respirar" },
     { key: "dor_muito_intensa", label: "Dor muito intensa / insuportável" },
     { key: "sangramento_volumoso", label: "Sangramento volumoso" },
+    { key: "rigidez_de_pescoco", label: "Rigidez de pescoço" },
     { key: "turvacao_visual", label: "Turvação visual súbita" },
     { key: "palpitacao", label: "Palpitação" },
-    { key: "sensacao_de_desmaio", label: "Sensação de desmaio" },
-    { key: "rigidez_de_pescoco", label: "Rigidez de pescoço" }
+    { key: "sensacao_de_desmaio", label: "Sensação de desmaio" }
   ];
 
   // --------------------------
@@ -132,22 +130,28 @@
     typingNode = null;
   }
 
-  function setQuickReplies(items = []) {
+  // Quick replies padrão + handler custom
+  function setQuickReplies(items = [], onClick) {
     quickEl.innerHTML = "";
     const suggestions = items.length ? items : [
       "Começaram há __ dias e desde então [pioraram/melhoraram/estão iguais].",
-      "Piora com __ e alivia com __.",
-      "Sem febre, sem secreções; dor [leve/moderada/intensa]."
+      "Desde o início, os sintomas estão [piorando/melhorando/iguais].",
+      "Teve febre? Máxima de __ °C.",
+      "Dor [leve/moderada/intensa] ou __/10."
     ];
     quickEl.className = "mb-2 flex gap-2 overflow-x-auto whitespace-nowrap";
-    suggestions.slice(0, 3).forEach(txt => {
+    suggestions.slice(0, 5).forEach(txt => {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "shrink-0 rounded-full border border-sky-200/60 bg-white px-3 py-1 text-xs text-sky-700 hover:bg-sky-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100";
       b.textContent = txt.replace(/^[•\-\d.\s]*/, "");
       b.addEventListener("click", () => {
-        inputEl.value = (inputEl.value ? (inputEl.value.trim() + " ") : "") + b.textContent;
-        inputEl.focus();
+        if (typeof onClick === "function") {
+          onClick(b.textContent);
+        } else {
+          inputEl.value = (inputEl.value ? (inputEl.value.trim() + " ") : "") + b.textContent;
+          inputEl.focus();
+        }
       });
       quickEl.appendChild(b);
     });
@@ -200,13 +204,14 @@
 
   function parseDemographicsFromText(t) {
     const res = {};
-    const mAge = t.match(/\b(\d{1,3})\s*anos?\b/);
+    // "39 anos" | "39" seguido de , masculino/feminino
+    const mAge = t.match(/\b(\d{1,3})\s*anos?\b/) || t.match(/\b(\d{1,3})\b\s*(?:,|\s)\s*(?:masculin[oa]|feminin[oa]|homem|mulher|masc|fem)\b/i);
     if (mAge) {
       const age = parseInt(mAge[1], 10);
       if (!Number.isNaN(age) && age >= 0 && age <= 120) res.age = age;
     }
-    if (/\b(feminina|feminino|mulher|fem)\b/.test(t)) res.sex = "F";
-    else if (/\b(masculina|masculino|homem|masc)\b/.test(t)) res.sex = "M";
+    if (/\b(feminina|feminino|mulher|fem)\b/i.test(t)) res.sex = "F";
+    else if (/\b(masculina|masculino|homem|masc)\b/i.test(t)) res.sex = "M";
     return res;
   }
 
@@ -231,8 +236,8 @@
       if (m.length === 4) { raw = `${m[2]} ${m[3]}`; normISO = normalizeDurationToISO(m[2], m[3]); }
       else if (m.length >= 3) { raw = `${m[1]} ${m[2]}`; normISO = normalizeDurationToISO(m[1], m[2]); }
     } else {
-      if (/desde\s+ontem/.test(t)) { raw = "1 dia"; normISO = "P1D"; }
-      else if (/desde\s+hoje/.test(t)) { raw = "0 dia"; normISO = "P0D"; }
+      if (/desde\s+ontem/i.test(t)) { raw = "1 dia"; normISO = "P1D"; }
+      else if (/desde\s+hoje/i.test(t)) { raw = "0 dia"; normISO = "P0D"; }
     }
     return { raw, normISO };
   }
@@ -380,7 +385,7 @@
       renderBotFromResult(out);
       ensureExportBtn().classList.remove("hidden");
 
-      // Abrir checklist se nunca abrimos e não temos sinais suficientes
+      // Sugerir abrir checklist se ainda não abrimos e não houver sinais suficientes
       const needChecklist = (!state.askedSymptomsOnce &&
                             (!state.payload.symptoms || state.payload.symptoms.length === 0) &&
                             !hasParsedSignals());
@@ -388,6 +393,14 @@
         state.askedSymptomsOnce = true;
         renderSymptoms();
         openOverlay("symptom-overlay");
+      }
+
+      // Abrir red flags uma única vez (sem bloquear cálculo)
+      if (!state._flagsOpenedOnce && !state.flagsAnswered &&
+          ((state.payload.symptoms && state.payload.symptoms.length > 0) || hasParsedSignals())) {
+        state._flagsOpenedOnce = true;
+        renderFlags();
+        openOverlay("flag-overlay");
       }
     } catch (e) {
       hideTyping();
@@ -411,12 +424,23 @@
     return "EMPTY";
   }
 
+  // Pergunta SIM/NÃO contextual
+  function askYesNo(question) {
+    if (!question) return;
+    if (state.lastAskedQuestion === question) return; // evita repetir
+    state.lastAskedQuestion = question;
+
+    addMessage("bot", `<strong>Pergunta rápida:</strong> ${question}`);
+    setQuickReplies(["Sim", "Não", "Não sei"], (answer) => {
+      const msg = `${question} — Resposta: ${answer}.`;
+      inputEl.value = msg;
+      document.getElementById("input-form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+  }
+
   function renderBotFromResult(out) {
     const sig = signatureOfResult(out);
-    if (sig === state.lastRenderSig) {
-      // evita duplicar “Hipóteses iniciais” idênticas
-      return;
-    }
+    if (sig === state.lastRenderSig) return; // evita duplicar
     state.lastRenderSig = sig;
 
     const { local, backend } = out || {};
@@ -464,13 +488,23 @@
       html += `<p class="mt-1 text-sm opacity-80"><em>${backend.safety_note}</em></p>`;
     }
 
+    // Pergunta fechada (prioriza backend; senão, usa gaps locais)
+    let ynAsked = false;
+    if (backend?.query_suggestions?.questions?.length) {
+      const q = backend.query_suggestions.questions[0];
+      if (q?.text) { askYesNo(q.text); ynAsked = true; }
+    }
+    if (!ynAsked && Array.isArray(local?.gaps?.questions) && local.gaps.questions.length) {
+      askYesNo(local.gaps.questions[0]);
+    }
+
     // Quick replies focadas no que falta
     const suggestions = [];
     if (!state.payload.duration_norm) suggestions.push("Começaram há __ dias e desde então [pioraram/melhoraram/estão iguais].");
     if (!state.payload.trajectory) suggestions.push("Desde o início, os sintomas estão [piorando/melhorando/iguais].");
     if (state.payload.fever_max_c == null && !/afebril/i.test(state.payload.freeText)) suggestions.push("Teve febre? Máxima de __ °C.");
     if (!state.payload.pain_bucket && !state.payload.painScale) suggestions.push("Dor [leve/moderada/intensa] ou __/10.");
-    if (suggestions.length) setQuickReplies(suggestions); else hideQuickReplies();
+    if (suggestions.length && !ynAsked) setQuickReplies(suggestions); else if (!ynAsked) hideQuickReplies();
 
     addMessage("bot", html || "Ok! Pode me contar mais detalhes?");
   }
@@ -540,7 +574,6 @@
       if (backend?.safety_note) {
         body += `<p style="opacity:.8"><em>${backend.safety_note}</em></p>`;
       }
-      // Referências (se local fornecer)
       if (last?.local?.references?.length) {
         body += `<h2 style="font:600 16px system-ui;margin:16px 0 6px">Referências</h2><ol>`;
         last.local.references.forEach(r => { body += `<li>${r}</li>`; });
@@ -571,16 +604,15 @@
   $("#start-btn")?.addEventListener("click", () => {
     state.consented = true;
     document.getElementById("consent")?.classList.add("hidden");
-    addMessage("bot", "Olá! Eu sou o OTTO. Vou tentat entender o seu quadro para orientar com segurança. 😊");
+    addMessage("bot", "Olá! Eu sou o OTTO. Vou tentar entender o seu quadro para orientar com segurança. 😊");
 
-    // Mini-intake (se presente no HTML)
+    // Mini-intake
     const mini = document.getElementById("mini-intake");
     const miniForm = document.getElementById("mini-intake-form");
     const ageInput = document.getElementById("mini-age");
-    const sexInput = document.getElementById("mini-sex");
     const miniSkip = document.getElementById("mini-intake-skip");
 
-    if (mini && miniForm && ageInput && sexInput) {
+    if (mini && miniForm && ageInput) {
       mini.classList.remove("hidden");
       mini.classList.add("flex");
 
@@ -589,15 +621,17 @@
       miniForm.addEventListener("submit", (ev) => {
         ev.preventDefault();
         const age = parseInt(String(ageInput.value || "").trim(), 10);
-        const sexLabel = String(sexInput.value || "").toLowerCase();
+        const sexChecked = document.querySelector('input[name="mini-sex"]:checked');
+        const sexVal = sexChecked ? sexChecked.value : "";
+
         if (!Number.isNaN(age) && age >= 0 && age <= 120) state.payload.age = age;
-        if (/fem/.test(sexLabel) || /femin/.test(sexLabel)) state.payload.sex = "F";
-        else if (/masc/.test(sexLabel) || /mascul/.test(sexLabel)) state.payload.sex = "M";
+        if (/^f$/i.test(sexVal)) state.payload.sex = "F";
+        else if (/^m$/i.test(sexVal)) state.payload.sex = "M";
         else state.payload.sex = "OUTRO";
 
         closeMini();
         addMessage("bot", "Obrigado! Idade e sexo registrados. Agora, selecione sintomas ou descreva o que sente.");
-        // Abrir seleção de sintomas já na sequência
+        // Abrir seleção de sintomas imediatamente
         renderSymptoms();
         openOverlay("symptom-overlay");
       });
@@ -636,8 +670,14 @@
 
   $("#skip-symptoms")?.addEventListener("click", () => {
     closeOverlay("symptom-overlay");
-    renderFlags();
-    openOverlay("flag-overlay");
+    // não bloqueia cálculo; se nunca mostramos flags, mostrar agora
+    if (!state._flagsOpenedOnce) {
+      state._flagsOpenedOnce = true;
+      renderFlags();
+      openOverlay("flag-overlay");
+    } else {
+      computeAndRespond();
+    }
   });
 
   $("#symptom-form")?.addEventListener("submit", (e) => {
@@ -647,13 +687,16 @@
     state.payload.symptoms = sel;
     closeOverlay("symptom-overlay");
 
-    // Ecoar sintomas selecionados (sem calcular ainda)
     const picked = sel.map(k => (SYMPTOMS_UI.find(s => s.key === k)?.label || k));
     if (picked.length) addMessage("bot", `Ok. Sintomas selecionados: ${picked.join(", ")}.`);
 
-    // Segue para red flags
-    renderFlags();
-    openOverlay("flag-overlay");
+    // abrir flags uma vez, sem bloquear cálculo
+    if (!state._flagsOpenedOnce) {
+      state._flagsOpenedOnce = true;
+      renderFlags();
+      openOverlay("flag-overlay");
+    }
+    computeAndRespond();
   });
 
   // --------------------------
@@ -685,19 +728,33 @@
     inputEl.value = "";
     addMessage("user", msg);
 
-    // guardar texto bruto (para o parser operar sobre o conjunto)
+    // acumula texto bruto e processa
     state.payload.freeTextOriginal = (state.payload.freeTextOriginal ? (state.payload.freeTextOriginal + " ") : "") + msg;
 
-    // parser e aplicação ao estado
+    // parser → estado
     const parsed = parseClinicalText(state.payload.freeTextOriginal);
     applyParsedToState(parsed);
 
-    // se red flags ainda não foram respondidas, abre overlay e só calcula depois
-    if (!state.flagsAnswered) {
-      renderFlags();
-      openOverlay("flag-overlay");
+    // heurística: se só capturou demografia e nada clínico, orientar para sintomas (sem flags)
+    const onlyDemo =
+      ((parsed.demographics?.age != null || parsed.demographics?.sex) &&
+       !parsed.durationNorm && !parsed.trajectory && parsed.feverMaxC == null &&
+       (!state.payload.symptoms || state.payload.symptoms.length === 0));
+
+    if (onlyDemo) {
+      renderSymptoms();
+      openOverlay("symptom-overlay");
       return;
     }
+
+    // se nunca abrimos flags e já há conteúdo clínico, abre flags (não bloqueia cálculo)
+    if (!state._flagsOpenedOnce &&
+        ((state.payload.symptoms && state.payload.symptoms.length > 0) || hasParsedSignals())) {
+      state._flagsOpenedOnce = true;
+      renderFlags();
+      openOverlay("flag-overlay");
+    }
+
     await computeAndRespond();
   });
 

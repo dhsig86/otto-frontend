@@ -1,18 +1,18 @@
 /*
   ROBOTTO — Tele-ENT Triage Orchestrator
   File: robotto.js
-  Version: 3.0.0 (2025-08-20)
+  Version: 3.2.0 (2025-08-20)
 
-  Objetivo desta revisão:
-  - Dar mais protagonismo ao backend (GPT-5-nano) no raciocínio clínico e na seleção de sintomas/red flags.
-  - Manter idade/sexo/duração/febre como sinais contextuais, mas sem sobreponderá-los.
-  - Chamar o backend com mais frequência em mudanças de contexto do usuário (texto/sintomas/flags).
-  - Continuar compatível com diagnostics.js v4 e app-ui.js v3.
+  Objetivos:
+  - Privilegiar o raciocínio do backend (GPT-5-nano) nas interações, sem sobrepesar "tempo".
+  - Evitar chamada precoce do backend quando há somente demografia (ex.: “39, masculino”).
+  - Manter compat com diagnostics.js v4 e app-ui.js v4 (fluxo sintomas → flags uma vez).
+  - Retornar local e backend separadamente + "blendedTop3" (para UI).
 
   API exposta:
     window.ROBOTTO = {
       run(payload, { rulesUrl?, forceLLM? } = {}) -> { ok, local, backend, meta },
-      setConfig(partial),     // alterar thresholds e URL do backend
+      setConfig(partial),     // alterar thresholds, URL do backend, etc.
       loadRules(url),         // pré-carrega rules json
       last()                  // último resultado
     }
@@ -28,12 +28,13 @@
     STREAM: false,
     MAX_TOKENS: 900,
     TEMPERATURE: 1,
+    LANG: "pt-BR",
 
     // Política de orquestração: "gpt_preferred" | "balanced" | "local_preferred"
     CALL_LLM_POLICY: "gpt_preferred",
 
     // Threshold de confiança do motor local para acionar LLM (quanto MAIOR, mais chamadas ao LLM)
-    LOCAL_CONF_THRESHOLD: 0.78, // gpt_preferred sugere >= 0.78
+    LOCAL_CONF_THRESHOLD: 0.78, // para "balanced" recomendo ~0.72 (ajustável via setConfig)
 
     // Peso do blend quando os dois estão disponíveis (0..1) — peso do BACKEND
     HYBRID_BACKEND_WEIGHT: 0.70,
@@ -41,6 +42,35 @@
     // Deixar claro ao backend que duração não deve dominar o raciocínio
     DEEMPHASIZE_DURATION: true
   };
+
+  // ----------------- System Prompt (PT-BR) -----------------
+  const SYSTEM_PROMPT_PT = `
+Você é o OTTO, um assistente de triagem em Otorrinolaringologia.
+Fale SEMPRE em português do Brasil, de forma clara, educada e concisa.
+
+Objetivo: gerar até 3 diagnósticos diferenciais com breve justificativa, checar sinais de alerta
+e, se necessário, fazer no máximo 1–2 perguntas objetivas por vez (preferencialmente SIM/NÃO).
+
+Prioridades:
+1) Segurança: se houver red flag, sinalize nível de cuidado e orientação imediata.
+2) Clareza: explique em 1 frase a razão de cada hipótese.
+3) Parcimônia: use idade/sexo/febre/duração como contexto, mas NÃO permita que "tempo" (duração)
+   domine o raciocínio. Se a duração estiver ausente/ambígua, não penalize desproporcionalmente.
+
+Formato de retorno (JSON):
+{
+  "differentials": [{"dx": "...", "probability": 0..1, "rationale": "..."}],
+  "next_steps": ["..."],
+  "care_level": "emergency"|"urgency"|"routine"|null,
+  "red_flags": ["..."],
+  "safety_note": "...",
+  "references": ["..."],
+  "query_suggestions": {
+    "questions": [{"text": "Pergunta fechada para SIM/NÃO", "options": ["Sim","Não"]}]
+  }
+}
+Se a entrada estiver vazia ou só com demografia, peça 1 pergunta curta e útil.
+  `.trim();
 
   // ----------------- Utils -----------------
   const clamp = (x, a, b) => Math.max(a, Math.min(b, Number.isFinite(+x) ? +x : a));
@@ -101,8 +131,6 @@
     return false;
   }
 
-  // Detecta se houve mudança de contexto que justifica reconsultar o backend
-  // (privilegiando raciocínio do LLM nas interações).
   function significantChange(prev, curr) {
     if (!prev) return true;
     const keysToTrack = [
@@ -130,6 +158,28 @@
     for (const x of fb) if (!fa.has(x)) return true;
 
     return false;
+  }
+
+  function isOnlyDemographics(payload) {
+    const hasDemo = (payload?.age != null) || !!payload?.sex;
+    const hasSymptoms = (payload?.symptoms || []).length > 0;
+    const hasFlags = (payload?.red_flags_reported || []).length > 0;
+    const hasClinSignals =
+      !!(payload?.trajectory) ||
+      (payload?.fever_max_c != null) ||
+      !!(payload?.duration || payload?.duration_norm) ||
+      (payload?.negations && payload.negations.length > 0);
+
+    if (!hasDemo) return false;
+    if (hasSymptoms || hasFlags || hasClinSignals) return false;
+
+    // Se houver texto, checar se ele é "apenas demografia"
+    const t = String(payload?.freeTextOriginal || payload?.freeText || "").toLowerCase();
+    if (!t) return true;
+    // remove números e palavras clássicas de demografia
+    const stripped = t.replace(/\d+/g, "").replace(/\b(anos?|masculin[oa]|feminin[oa]|homem|mulher|masc|fem|sexo|idade)\b/g, "").trim();
+    // se sobrou "nada", é só demografia
+    return stripped.length === 0;
   }
 
   // ----------------- Rules cache -----------------
@@ -185,6 +235,12 @@
       max_tokens: CONFIG.MAX_TOKENS,
       temperature: CONFIG.TEMPERATURE,
 
+      // prompts/idioma/contrato
+      system_prompt: SYSTEM_PROMPT_PT,
+      language: CONFIG.LANG,
+      expect_json: true,
+      include_suggestions: true,
+
       // clínico
       free_text: payload.freeText || "",
       age: payload.age ?? null,
@@ -221,7 +277,7 @@
       const res = await withTimeout(req, CONFIG.TIMEOUT_MS, "backend-timeout");
       if (!res.ok) throw new Error(`backend ${res.status}`);
       const json = await res.json();
-      // contrato esperado: {differentials:[{dx, probability, rationale}], next_steps:[], care_level, red_flags:[], safety_note, references?:[], query_suggestions?:{symptoms?:[], flags?:[]}}
+      // contrato esperado: {differentials:[{dx, probability, rationale}], next_steps:[], care_level, red_flags:[], safety_note, references?:[], query_suggestions?:{questions:[...]}}
       if (Array.isArray(json?.differentials)) {
         json.differentials = json.differentials.map(d => ({
           dx: d.dx,
@@ -238,6 +294,9 @@
 
   // ----------------- Orchestrator -----------------
   function shouldCallLLM(policy, local, payload) {
+    // Evita backend quando há SÓ demografia (fluxo: abrir sintomas primeiro)
+    if (isOnlyDemographics(payload)) return false;
+
     const conf = local?.confidence ?? 0.0;
     const conflict = detectConflict(payload);
     const flags = (payload?.red_flags_reported || []).length > 0;
@@ -255,7 +314,7 @@
     if (conf < threshold) return true;         // confiança local aquém do patamar
     if (policy === "gpt_preferred" && (hasSymptoms || hasText)) return true; // dialogar mais com o LLM
 
-    // Caso contrário, só chama se o usuário de fato mudou algo relevante desde a última execução
+    // Caso contrário, só chama se o usuário de fato mudou algo relevante
     if (significantChange(CACHE.lastPayload, payload)) return true;
 
     return false;
@@ -290,7 +349,7 @@
     // 1) Motor local (rápido; não sobrepesa duração)
     const local = runLocal(payload || {}, rules);
 
-    // 2) Decisão de chamada do backend — mais agressiva em gpt_preferred
+    // 2) Decisão de chamada do backend — mais agressiva em gpt_preferred/balanced
     const policy = CONFIG.CALL_LLM_POLICY;
     const callLLM = options.forceLLM || shouldCallLLM(policy, local, local.payload);
 
@@ -300,7 +359,7 @@
       backendResp = await callLLMBackendForTriage(local.payload);
     }
 
-    // 4) Blend opcional (mantém compat com app-ui: continuamos retornando local/backend separados)
+    // 4) Blend opcional
     let finalTop3 = local.top3?.map(d => ({ dx: d.dx, probability: d.norm })) || [];
     if (backendResp && !backendResp._error && Array.isArray(backendResp.differentials)) {
       finalTop3 = blendDifferentials(
@@ -322,7 +381,8 @@
           below_threshold: (local.confidence ?? 0) < CONFIG.LOCAL_CONF_THRESHOLD,
           flags_present: (local.payload?.red_flags_reported || []).length > 0,
           conflict: detectConflict(local.payload),
-          significant_change: significantChange(CACHE.lastPayload, local.payload)
+          significant_change: significantChange(CACHE.lastPayload, local.payload),
+          only_demographics_blocked: isOnlyDemographics(local.payload)
         }
       }
     };
@@ -339,6 +399,7 @@
     // sanity: clamp ranges
     CONFIG.HYBRID_BACKEND_WEIGHT = clamp(CONFIG.HYBRID_BACKEND_WEIGHT, 0, 1);
     CONFIG.LOCAL_CONF_THRESHOLD = clamp(CONFIG.LOCAL_CONF_THRESHOLD, 0.5, 0.95);
+    if (partial.LANG) CONFIG.LANG = String(partial.LANG);
   }
 
   // expose

@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>OTTO – Triagem ORL</title>
+  <meta name="description" content="Assistente de triagem inicial em Otorrinolaringologia (ORL).">
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     @keyframes blink { 0%,80%,100%{opacity:0} 40%{opacity:1} }
@@ -44,7 +45,7 @@
 
     <!-- CHAT -->
     <main id="chat" class="relative flex-1 overflow-y-auto p-4" aria-label="Mensagens">
-      <!-- Watermark do mascote (não afeta o conteúdo) -->
+      <!-- Watermark do mascote -->
       <div aria-hidden="true" class="pointer-events-none absolute right-3 top-3 opacity-10 select-none">
         <img src="assets/otto.png" alt="" class="h-28 w-28"/>
       </div>
@@ -74,45 +75,59 @@
     </div>
   </div>
 
-  <!-- CONSENTIMENTO -->
+  <!-- CONSENTIMENTO (LGPD) -->
   <div id="consent" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" role="dialog" aria-modal="true">
-    <div class="mx-4 w-full max-w-md rounded bg-white p-4 text-center dark:bg-gray-800">
-      <p class="mb-4 text-sm">Para iniciar, confirme o consentimento de uso de dados conforme a LGPD.</p>
-      <label class="mb-4 flex items-center justify-center space-x-2">
-        <input type="checkbox" id="lgpd-checkbox" aria-label="Confirmo consentimento"/>
-        <span>Li e concordo.</span>
+    <div class="mx-4 w-full max-w-md rounded bg-white p-4 text-left dark:bg-gray-800">
+      <h2 class="mb-2 text-lg font-semibold">Consentimento LGPD</h2>
+
+      <div id="terms-box" class="mb-3 max-h-44 overflow-y-auto rounded border p-3 text-sm leading-relaxed dark:border-gray-600">
+        <p><strong>Finalidade:</strong> este serviço realiza triagem inicial em Otorrinolaringologia para orientar a priorização do atendimento. Não substitui consulta médica.</p>
+        <p><strong>Dados coletados:</strong> idade, sexo (biológico), sintomas, texto livre e sinais de alerta. Não solicitamos CPF, endereço ou imagens.</p>
+        <p><strong>Tratamento:</strong> os dados são usados para gerar hipóteses diagnósticas e recomendações de conduta. Parte do processamento pode ocorrer em servidores de parceiros tecnológicos.</p>
+        <p><strong>Base legal:</strong> consentimento (LGPD art. 7º, I).</p>
+        <p><strong>Direitos do titular:</strong> você pode solicitar acesso, correção ou eliminação dos dados. Para dúvidas, contate <em>contato@seusite.com</em>.</p>
+        <p><strong>Riscos:</strong> a orientação pode ser imprecisa. Em caso de emergência, procure atendimento imediato.</p>
+        <p class="mt-2 italic opacity-80">Role até o final para habilitar o checkbox.</p>
+      </div>
+
+      <label class="mb-3 flex items-center gap-2 text-sm">
+        <input id="lgpd-checkbox" type="checkbox" disabled />
+        <span>Li e concordo com os termos de tratamento de dados.</span>
       </label>
-      <button id="start-btn" disabled aria-label="Iniciar"
-              class="w-full rounded bg-blue-600 py-2 text-white opacity-50">Iniciar</button>
+
+      <button id="start-btn" class="w-full rounded bg-blue-600 py-2 font-medium text-white opacity-50" disabled>
+        Começar
+      </button>
     </div>
   </div>
 
   <!-- OVERLAY: MINI-INTAKE (IDADE/SEXO) -->
-<div id="mini-intake" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50" role="dialog" aria-modal="true">
-  <form id="mini-intake-form" class="mx-4 w-full max-w-md space-y-4 rounded bg-white p-4 text-left dark:bg-gray-800">
-    <h2 class="text-center text-sm font-semibold">Antes de começarmos</h2>
-    <label class="block">
-      <span class="text-sm">Idade (anos)</span>
-      <input type="number" id="mini-age" min="0" max="120"
-             class="mt-1 w-full rounded border p-2 dark:border-gray-600 dark:bg-gray-700 dark:text-white" required>
-    </label>
-    <fieldset>
-      <legend class="text-sm mb-1">Sexo (biológico)</legend>
-      <label class="mr-4 inline-flex items-center gap-2">
-        <input type="radio" name="mini-sex" value="M" required> <span>Masculino</span>
+  <div id="mini-intake" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50" role="dialog" aria-modal="true">
+    <form id="mini-intake-form" class="mx-4 w-full max-w-md space-y-4 rounded bg-white p-4 text-left dark:bg-gray-800">
+      <h2 class="text-center text-sm font-semibold">Antes de começarmos</h2>
+      <label class="block">
+        <span class="text-sm">Idade (anos)</span>
+        <input type="number" id="mini-age" min="0" max="120"
+               class="mt-1 w-full rounded border p-2 dark:border-gray-600 dark:bg-gray-700 dark:text-white" required>
       </label>
-      <label class="mr-4 inline-flex items-center gap-2">
-        <input type="radio" name="mini-sex" value="F" required> <span>Feminino</span>
-      </label>
-      <label class="inline-flex items-center gap-2">
-        <input type="radio" name="mini-sex" value="OUTRO" required> <span>Outro/Prefiro não dizer</span>
-      </label>
-    </fieldset>
-    <div class="flex justify-end gap-2">
-      <button type="submit" class="rounded bg-blue-600 px-3 py-1 text-white">Continuar</button>
-    </div>
-  </form>
-</div>
+      <fieldset>
+        <legend class="text-sm mb-1">Sexo (biológico)</legend>
+        <label class="mr-4 inline-flex items-center gap-2">
+          <input type="radio" name="mini-sex" value="M" required> <span>Masculino</span>
+        </label>
+        <label class="mr-4 inline-flex items-center gap-2">
+          <input type="radio" name="mini-sex" value="F" required> <span>Feminino</span>
+        </label>
+        <label class="inline-flex items-center gap-2">
+          <input type="radio" name="mini-sex" value="OUTRO" required> <span>Outro/Prefiro não dizer</span>
+        </label>
+      </fieldset>
+      <div class="flex justify-between gap-2">
+        <button type="button" id="mini-intake-skip" class="rounded border px-3 py-1 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100">Pular</button>
+        <button type="submit" class="rounded bg-blue-600 px-3 py-1 text-white">Continuar</button>
+      </div>
+    </form>
+  </div>
 
   <!-- OVERLAY: SINTOMAS -->
   <div id="symptom-overlay" class="fixed inset-0 z-40 hidden items-center justify-center bg-black/50" role="dialog" aria-modal="true">
@@ -141,20 +156,46 @@
     </form>
   </div>
 
-  <!-- Config do backend -->
+  <!-- Config do backend + splash hide -->
   <script>
     window.ROB_BACKEND_API_URL = "https://otto-backend-otosig-aceeb4ea00e8.herokuapp.com";
-    // esconder splash quando a UI estiver pronta
     window.addEventListener("load", () => {
       const s = document.getElementById("splash-otto");
       if (s) setTimeout(() => s.classList.add("fade-out"), 900);
     });
+
+    // Habilita checkbox do consentimento ao rolar até o fim
+    (function enableConsentAfterScroll(){
+      const terms = document.getElementById('terms-box');
+      const chk = document.getElementById('lgpd-checkbox');
+      const btn = document.getElementById('start-btn');
+      if (!terms || !chk || !btn) return;
+      terms.addEventListener('scroll', () => {
+        const atBottom = terms.scrollTop + terms.clientHeight >= terms.scrollHeight - 8;
+        if (atBottom) chk.disabled = false;
+      });
+      // botão fica ativo apenas quando o checkbox estiver marcado
+      chk.addEventListener('change', () => {
+        btn.disabled = !chk.checked;
+        btn.classList.toggle('opacity-50', !chk.checked);
+      });
+    })();
   </script>
 
-  <!-- Módulo local opcional (economiza tokens e provê perguntas de follow-up) -->
+  <!-- Módulo local (diagnóstico) -->
   <script src="diagnostics.js"></script>
-  <!-- Orquestrador que usa diagnostics.js se presente -->
+  <!-- Orquestrador -->
   <script src="robotto.js"></script>
+  <!-- Ajuste de política de orquestração (antes da UI) -->
+  <script>
+    if (window.ROBOTTO?.setConfig) {
+      window.ROBOTTO.setConfig({
+        CALL_LLM_POLICY: "balanced",
+        LOCAL_CONF_THRESHOLD: 0.72,
+        HYBRID_BACKEND_WEIGHT: 0.6
+      });
+    }
+  </script>
   <!-- UI -->
   <script src="app-ui.js"></script>
 </body>

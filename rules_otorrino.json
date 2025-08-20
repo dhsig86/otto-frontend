@@ -3,8 +3,8 @@
   "updated_at": "2025-08-20",
   "locale": "pt-BR",
   "legal": {
-    "disclaimer": "Este assistente realiza triagem inicial e não...tendimento presencial. Seus dados são tratados segundo a LGPD.",
-    "data_minimization_note": "Solicitamos apenas informações ne...ê pode pedir acesso ou eliminação dos dados a qualquer momento."
+    "disclaimer": "Este assistente realiza triagem inicial e não substitui consulta médica presencial. Em caso de sinais de alarme, procure atendimento de urgência. As recomendações são educacionais.",
+    "data_minimization_note": "Solicitamos apenas informações necessárias para triagem (idade, sexo biológico, sintomas, texto livre e sinais de alerta). Você pode solicitar acesso ou eliminação dos dados a qualquer momento conforme a LGPD."
   },
   "intake": {
     "sections": [
@@ -29,36 +29,16 @@
         "id": "contact",
         "title": "Contato",
         "fields": [
-          {
-            "id": "name",
-            "label": "Nome completo",
-            "type": "text",
-            "required": true
-          },
-          {
-            "id": "email",
-            "label": "E-mail para contato",
-            "type": "email",
-            "required": false
-          },
-          {
-            "id": "phone",
-            "label": "Telefone celular (opcional)",
-            "type": "text",
-            "required": false
-          }
+          { "id": "name", "label": "Nome completo", "type": "text", "required": true },
+          { "id": "email", "label": "E-mail para contato", "type": "email", "required": false },
+          { "id": "phone", "label": "Telefone celular (opcional)", "type": "text", "required": false }
         ]
       },
       {
         "id": "demographics",
         "title": "Demografia",
         "fields": [
-          {
-            "id": "age",
-            "label": "Idade",
-            "type": "number",
-            "required": false
-          },
+          { "id": "age", "label": "Idade", "type": "number", "required": false },
           {
             "id": "sex",
             "label": "Sexo (biológico)",
@@ -91,14 +71,10 @@
             "otorreia": 0.8,
             "hipoacusia": 0.3
           },
-          "source": "AAP/AHA; AAFP 2019",
+          "source": "AAP/AHA; AAFP 2019; CURRENT Oto-HNS 3e ch.49",
           "modifiers": {
-            "age": [
-              { "lte": 6, "boost": 0.10 }
-            ],
-            "fever_max_c": [
-              { "gte": 39.0, "boost": 0.10 }
-            ]
+            "age": [{ "lte": 6, "boost": 0.10 }],
+            "fever_max_c": [{ "gte": 39.0, "boost": 0.10 }]
           }
         },
         {
@@ -108,11 +84,9 @@
             "otalgia": 1.2,
             "otorreia": 0.6
           },
-          "source": "AAO-HNS; RCH",
+          "source": "AAO-HNS; CURRENT Oto-HNS 3e ch.47",
           "modifiers": {
-            "trajectory": [
-              { "is": "piorando", "boost": 0.05 }
-            ]
+            "trajectory": [{ "is": "piorando", "boost": 0.05 }]
           }
         },
         {
@@ -122,17 +96,15 @@
             "hipoacusia": 0.9,
             "otalgia": 0.2
           },
-          "source": "AAO-HNS Patient Info"
+          "source": "CURRENT Oto-HNS 3e ch.47"
         },
         {
           "name": "Outra/Necessita Exame",
           "prior": 0.35,
-          "symptom_weights": {
-            "tontura": 0.3
-          },
+          "symptom_weights": { "tontura": 0.3 },
           "source": "—"
         }
-      ]
+        ]
     },
     "nariz": {
       "title": "Nariz",
@@ -146,14 +118,10 @@
             "pressao_facial": 0.4,
             "febre": 0.3
           },
-          "source": "AAFP; ABORL",
+          "source": "AAFP; ABORL; CURRENT Oto-HNS 3e ch.15",
           "modifiers": {
-            "duration_days": [
-              { "lte": 7, "boost": 0.15 }
-            ],
-            "fever_max_c": [
-              { "lte": 38.0, "boost": 0.05 }
-            ]
+            "duration_days": [{ "lte": 7, "boost": 0.15 }],
+            "fever_max_c": [{ "lte": 38.0, "boost": 0.05 }]
           }
         },
         {
@@ -164,17 +132,11 @@
             "rinorreia": 0.4,
             "febre": 0.6
           },
-          "source": "IDSA ABRS; AAFP Adult Sinusitis; ABORL 2022",
+          "source": "IDSA; AAFP Adult Sinusitis; ABORL 2022; CURRENT Oto-HNS 3e ch.15",
           "modifiers": {
-            "duration_days": [
-              { "gte": 10, "boost": 0.25 }
-            ],
-            "trajectory": [
-              { "is": "dupla_piora", "boost": 0.30 }
-            ],
-            "fever_max_c": [
-              { "gte": 39.0, "boost": 0.15 }
-            ]
+            "duration_days": [{ "gte": 10, "boost": 0.25 }],
+            "trajectory": [{ "is": "dupla_piora", "boost": 0.30 }],
+            "fever_max_c": [{ "gte": 39.0, "boost": 0.15 }]
           }
         },
         {
@@ -185,7 +147,7 @@
             "obstrucao_nasal": 0.9,
             "hiposmia": 0.3
           },
-          "source": "AAFP 2023 Allergic Rhinitis"
+          "source": "AAFP 2023; CURRENT Oto-HNS 3e ch.14"
         },
         {
           "name": "Outra/Necessita Exame",
@@ -206,12 +168,10 @@
             "febre": 0.6,
             "tosse": 0.4
           },
-          "source": "AAFP; CDC",
+          "source": "AAFP; CDC; CURRENT Oto-HNS 3e ch.31",
           "modifiers": {
             "negations": { "tosse": 0.05 },
-            "fever_max_c": [
-              { "lte": 38.5, "boost": 0.05 }
-            ]
+            "fever_max_c": [{ "lte": 38.5, "boost": 0.05 }]
           }
         },
         {
@@ -221,15 +181,13 @@
             "odinofagia": 1.2,
             "febre": 0.8
           },
-          "source": "IDSA Pharyngitis; MDCalc McIsaac",
+          "source": "IDSA; MDCalc McIsaac; CURRENT Oto-HNS 3e ch.31",
           "modifiers": {
             "age": [
               { "lte": 14, "boost": 0.15 },
               { "gte": 45, "boost": -0.10 }
             ],
-            "trajectory": [
-              { "is": "piorando", "min_duration_days": 3, "boost": 0.10 }
-            ],
+            "trajectory": [{ "is": "piorando", "min_duration_days": 3, "boost": 0.10 }],
             "negations": { "tosse": -0.20 }
           }
         },
@@ -241,7 +199,7 @@
             "halitose": 0.6,
             "disfagia": 0.5
           },
-          "source": "Consensos DRGE/LPR"
+          "source": "Consensos DRGE/LPR; CURRENT Oto-HNS 3e ch.30–31"
         },
         {
           "name": "Outra/Necessita Exame",
@@ -261,14 +219,10 @@
             "adenomegalia_cervical": 1.2,
             "febre": 0.6
           },
-          "source": "Consensos de linfonodomegalias",
+          "source": "Consensos de linfonodomegalias; CURRENT Oto-HNS 3e ch.27",
           "modifiers": {
-            "duration_days": [
-              { "lte": 21, "boost": 0.10 }
-            ],
-            "fever_max_c": [
-              { "gte": 38.0, "boost": 0.05 }
-            ]
+            "duration_days": [{ "lte": 21, "boost": 0.10 }],
+            "fever_max_c": [{ "gte": 38.0, "boost": 0.05 }]
           }
         },
         {
@@ -278,7 +232,7 @@
             "halitose": 0.5,
             "disfagia": 0.3
           },
-          "source": "Diretrizes sialadenite"
+          "source": "Diretrizes sialadenite; CURRENT Oto-HNS 3e ch.18–19"
         },
         {
           "name": "Outra/Necessita Exame",
@@ -323,60 +277,16 @@
       "otorreia": ["secrecao_otica"]
     },
     "domain_classification_keywords": {
-      "garganta": [
-        "garganta",
-        "faringe",
-        "amígdala",
-        "amigdalite",
-        "odinofagia",
-        "disfagia",
-        "globus",
-        "dor ao engolir",
-        "rouquidão"
-      ],
-      "laringe": [
-        "rouquidão",
-        "disfonia",
-        "garganta",
-        "engolir",
-        "disfagia",
-        "l aryng",
-        "voz cansada"
-      ],
-      "nariz": [
-        "nariz",
-        "coriza",
-        "rinite",
-        "rinossinusite",
-        "sinusite",
-        "obstrução nasal",
-        "pressão na face",
-        "epistaxe"
-      ],
-      "ouvido": [
-        "ouvido",
-        "otalgia",
-        "otite",
-        "tímpano",
-        "zumbido",
-        "otorreia",
-        "dor no ouvido",
-        "audicao",
-        "/ouvid[oa]\\s*dor/"
-      ],
-      "pescoco": [
-        "pescoço",
-        "cervical",
-        "linfonodo",
-        "nódulo",
-        "caroço",
-        "adenomegalia"
-      ]
+      "garganta": ["garganta", "faringe", "amígdala", "amigdalite", "odinofagia", "disfagia", "globus", "dor ao engolir", "rouquidão"],
+      "laringe": ["rouquidão", "disfonia", "garganta", "engolir", "disfagia", "voz cansada"],
+      "nariz": ["nariz", "coriza", "rinite", "rinossinusite", "sinusite", "obstrução nasal", "pressão na face", "epistaxe"],
+      "ouvido": ["ouvido", "otalgia", "otite", "tímpano", "zumbido", "otorreia", "dor no ouvido", "audicao", "/ouvid[oa]\\s*dor/"],
+      "pescoco": ["pescoço", "cervical", "linfonodo", "nódulo", "caroço", "adenomegalia"]
     },
     "escalation_levels": {
       "immediate": { "label": "Emergência", "cta": "Procure pronto atendimento AGORA." },
-      "urgent":    { "label": "Urgente",    "cta": "Procure atendimento presencial/teleconsulta prioritária." },
-      "priority":  { "label": "Prioritário","cta": "Agende avaliação com prioridade." }
+      "urgent": { "label": "Urgente", "cta": "Procure atendimento presencial/teleconsulta prioritária." },
+      "priority": { "label": "Prioritário", "cta": "Agende avaliação com prioridade." }
     }
   },
   "ui_texts": {
