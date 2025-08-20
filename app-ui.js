@@ -1,8 +1,11 @@
-// app-ui.js (v2 — mini‑intake + parser clínico)
-// - Mini-intake Idade/Sexo logo após consentimento (persistir em state.payload.age/sex).
-// - Parser clínico (texto livre): duração (normalizada), trajetória, febre máx., dor (bucket / NRS), negações (“sem tosse”).
-// - Não abrir checklist se o parser já conferiu contexto suficiente (aceite: “dor de garganta há 5 dias, piorando, sem tosse”).
-// - Mantém compatibilidade com ROBOTTO.run; envia freeText “limpo” (com negações tratadas) e guarda original.
+// app-ui.js (v3 — mini-intake + parser + orchestration com red flags gate)
+// Este arquivo coordena a UI e orquestra o fluxo com ROBOTTO.run() e diagnostics.js v4.
+// Regras principais:
+//  1) Idade/sexo: coletados no mini-intake (ou no texto), salvos em state.payload.
+//  2) Sintomas: a UI ecoa os selecionados, mas NÃO calcula ainda.
+//  3) Cálculo só ocorre após o formulário de RED FLAGS ser submetido (gate de segurança).
+//  4) Texto livre sempre alimenta o parser clínico (duração/trajectória/Tmax/negações).
+//  5) Evita duplicar “Hipóteses iniciais” usando assinatura do último resultado renderizado.
 
 (function () {
   // --------------------------
@@ -10,21 +13,23 @@
   // --------------------------
   const state = {
     consented: false,
+    flagsAnswered: false,          // gate: só calcula depois de responder red flags
     askedSymptomsOnce: false,
+    lastRenderSig: null,           // evita duplicar render
     payload: {
       domain: null,
-      age: null,                 // mini-intake
-      sex: null,                 // "M" | "F" | "OUTRO"
-      duration: null,            // string (mantida para compat); receberá a versão normalizada
-      duration_norm: null,       // ISO-like: "P5D", "PT12H", "P2W", "P1M"
-      trajectory: null,          // "piorando" | "melhorando" | "estavel"
-      fever_max_c: null,         // número (ex.: 38.5)
-      pain_bucket: null,         // "leve" | "moderada" | "intensa"
-      painScale: null,           // 0..10 (se extraído como NRS)
-      negations: [],             // ex.: ["tosse","febre"]
+      age: null,
+      sex: null,                   // "M" | "F" | "OUTRO"
+      duration: null,              // string normalizada ("P5D" etc.)
+      duration_norm: null,         // idem (compat)
+      trajectory: null,            // "piorando" | "melhorando" | "estavel"
+      fever_max_c: null,           // número (ex.: 38.5)
+      pain_bucket: null,           // "leve" | "moderada" | "intensa"
+      painScale: null,             // 0..10
+      negations: [],
       symptoms: [],
-      freeText: "",              // texto “limpo” (com afebril etc.)
-      freeTextOriginal: "",      // acumulado bruto do usuário
+      freeText: "",                // texto limpo (com negações tratadas)
+      freeTextOriginal: "",        // texto bruto acumulado do usuário
       comorbidities: [],
       medications: [],
       red_flags_reported: []
@@ -76,11 +81,8 @@
   // --------------------------
   const $ = (sel) => document.querySelector(sel);
   const messagesEl = $("#messages");
-  const progressEl = $("#progress");
   const quickEl = $("#quick-replies");
   const inputEl = $("#user-input");
-
-  if (progressEl) progressEl.style.display = "none"; // vamos usar “digitando…”
 
   function addMessage(role, html) {
     const wrap = document.createElement("div");
@@ -97,20 +99,6 @@
     }
     messagesEl.appendChild(wrap);
     messagesEl.parentElement.scrollTop = messagesEl.parentElement.scrollHeight;
-  }
-
-  let exportBtn = null;
-  function ensureExportBtn() {
-    if (exportBtn) return exportBtn;
-    exportBtn = document.createElement("button");
-    exportBtn.id = "export-report";
-    exportBtn.type = "button";
-    exportBtn.textContent = "Gerar relatório (PDF)";
-    exportBtn.className = "mb-2 hidden rounded bg-green-600 px-3 py-1 text-white";
-    const footer = document.querySelector("footer");
-    footer.insertBefore(exportBtn, quickEl);
-    exportBtn.addEventListener("click", handleExportPDF);
-    return exportBtn;
   }
 
   let typingNode = null;
@@ -205,13 +193,11 @@
 
   function parseDemographicsFromText(t) {
     const res = {};
-    // idade
     const mAge = t.match(/\b(\d{1,3})\s*anos?\b/);
     if (mAge) {
       const age = parseInt(mAge[1], 10);
       if (!Number.isNaN(age) && age >= 0 && age <= 120) res.age = age;
     }
-    // sexo
     if (/\b(feminina|feminino|mulher|fem)\b/.test(t)) res.sex = "F";
     else if (/\b(masculina|masculino|homem|masc)\b/.test(t)) res.sex = "M";
     return res;
@@ -219,15 +205,14 @@
 
   function normalizeDurationToISO(qty, unit) {
     const n = Math.max(0, Number(qty || 0));
-    const u = unit.toLowerCase();
+    const u = String(unit || "").toLowerCase();
     if (/(hora|h)/.test(u)) return `PT${n}H`;
     if (/(semana|sem)/.test(u)) return `P${n}W`;
     if (/(m[eê]s|mes)/.test(u)) return `P${n}M`;
-    return `P${n}D`; // dias por padrão
+    return `P${n}D`;
   }
 
   function extractDuration(t) {
-    // Exemplos: "há 5 dias", "faz 2 semanas", "tem 3 horas", "5d", "2 sem", "1 mês"
     let raw = null, normISO = null;
     let m =
       t.match(/\b(há|faz|tem)\s*(\d{1,3})\s*(horas?|h|dias?|d|semanas?|sem|m[eê]s(?:es)?)\b/i) ||
@@ -246,21 +231,18 @@
   }
 
   function extractTrajectory(t) {
-    if (/\bpior(a|ou|ando)\b/.test(t) || /\bpiorando\b/.test(t)) return "piorando";
-    if (/\bmelhor(a|ou|ando)\b/.test(t) || /\bmelhorando\b/.test(t)) return "melhorando";
-    if (/\b(igual|est[aá]vel|na mesma|sem mudan[çc]a)\b/.test(t)) return "estavel";
+    if (/\bdupla\s+piora\b/i.test(t)) return "dupla_piora";
+    if (/\bpior(a|ou|ando)\b/i.test(t) || /\bpiorando\b/i.test(t)) return "piorando";
+    if (/\bmelhor(a|ou|ando)\b/i.test(t) || /\bmelhorando\b/i.test(t)) return "melhorando";
+    if (/\b(igual|est[aá]vel|na mesma|sem mudan[çc]a)\b/i.test(t)) return "estavel";
     return null;
   }
 
   function extractFeverMaxC(t) {
-    // Aceita "38,5", "38.5", "38.5°C", "39 ºC", "febre 39", "Tmax 38,2"
     const candidates = [];
-    // padrões explícitos com °C
-    t.replace(/(\d{2}(?:[.,]\d)?)\s*(?:°|º)?\s*C\b/g, (_, num) => { candidates.push(num); return _; });
-    // "febre 39" / "tmax 38,5" / "temperatura 38"
-    t.replace(/\b(?:febre|t\s*max|tmax|temperatura)\s*(\d{2}(?:[.,]\d)?)\b/g, (_, num) => { candidates.push(num); return _; });
-    // se só número de 2 dígitos com separador e contexto de febre na frase
-    if (/\bfebre|t\s*max|tmax|temperatura\b/.test(t)) {
+    t.replace(/(\d{2}(?:[.,]\d)?)\s*(?:°|º)?\s*C\b/gi, (_, num) => { candidates.push(num); return _; });
+    t.replace(/\b(?:febre|t\s*max|tmax|temperatura)\s*(\d{2}(?:[.,]\d)?)\b/gi, (_, num) => { candidates.push(num); return _; });
+    if (/\bfebre|t\s*max|tmax|temperatura\b/i.test(t)) {
       t.replace(/\b(\d{2}(?:[.,]\d)?)\b/g, (_, num) => { candidates.push(num); return _; });
     }
     for (const raw of candidates) {
@@ -271,11 +253,9 @@
   }
 
   function extractPain(t) {
-    // bucket por palavras
-    if (/\bdor\s+(?:muito\s+)?(forte|intensa|severa)\b/.test(t)) return { bucket: "intensa", nrs: 8 };
-    if (/\bdor\s+moderad[ao]\b/.test(t)) return { bucket: "moderada", nrs: 6 };
-    if (/\bdor\s+leve\b/.test(t)) return { bucket: "leve", nrs: 3 };
-    // NRS 0–10
+    if (/\bdor\s+(?:muito\s+)?(forte|intensa|severa)\b/i.test(t)) return { bucket: "intensa", nrs: 8 };
+    if (/\bdor\s+moderad[ao]\b/i.test(t)) return { bucket: "moderada", nrs: 6 };
+    if (/\bdor\s+leve\b/i.test(t)) return { bucket: "leve", nrs: 3 };
     const m = t.match(/\b(\d{1,2})\s*\/\s*10\b/);
     if (m) {
       const n = Math.max(0, Math.min(10, parseInt(m[1], 10)));
@@ -286,7 +266,6 @@
   }
 
   function extractNegationsAndClean(text) {
-    // negações simples com “sem|nega|não tem …”
     const neg = [];
     let t = " " + text + " ";
     const NEG_MAP = [
@@ -303,8 +282,6 @@
       if (re.test(t)) neg.push(token);
       t = t.replace(re, replace);
     });
-    // “afebril” é seguro (não casa com \b(febre|febril)\b)
-    // limpar espaços múltiplos
     t = t.replace(/\s{2,}/g, " ").trim();
     return { neg, cleaned: t };
   }
@@ -320,13 +297,9 @@
 
   function parseClinicalText(aggregateOriginal) {
     const original = aggregateOriginal || "";
-    // Extrair idade/sexo do texto quando o usuário fala informalmente
     const demo = parseDemographicsFromText(original);
-
-    // Negations + limpeza (principal: “sem febre” -> “afebril”)
     const negClean = extractNegationsAndClean(original);
     const t = negClean.cleaned;
-
     const dur = extractDuration(t);
     const traj = extractTrajectory(t);
     const tmax = extractFeverMaxC(t);
@@ -354,7 +327,7 @@
     if (parsed.demographics?.sex) state.payload.sex = parsed.demographics.sex;
 
     if (parsed.durationNorm) {
-      state.payload.duration = parsed.durationNorm; // mantém “duration” como normalizada
+      state.payload.duration = parsed.durationNorm;
       state.payload.duration_norm = parsed.durationNorm;
     }
     if (parsed.trajectory) state.payload.trajectory = parsed.trajectory;
@@ -362,14 +335,11 @@
     if (parsed.painBucket) state.payload.pain_bucket = parsed.painBucket;
     if (parsed.painNRS != null) state.payload.painScale = parsed.painNRS;
 
-    // negações acumuladas e únicas
     const mergedNeg = new Set([...(state.payload.negations || []), ...(parsed.negations || [])]);
     state.payload.negations = Array.from(mergedNeg);
 
-    // domínio (apenas se não definido explicitamente)
     if (!state.payload.domain && parsed.domainHint) state.payload.domain = parsed.domainHint;
 
-    // substituir freeText pelo limpo; manter original acumulado
     state.payload.freeText = parsed.cleanedText;
   }
 
@@ -395,19 +365,18 @@
       try {
         out = await window.ROBOTTO.run(state.payload, { rulesUrl: state.rulesUrl, forceLLM: false });
       } catch (e) {
-        console.warn("run com regras falhou; tentando sem rulesUrl:", e);
+        console.warn("ROBOTTO.run com rulesUrl falhou; tentando sem rulesUrl:", e);
         out = await window.ROBOTTO.run(state.payload, { forceLLM: false });
       }
 
       hideTyping();
       renderBotFromResult(out);
-
       ensureExportBtn().classList.remove("hidden");
 
-      // Abrir checklist apenas se realmente precisamos (sem sintomas e sem sinais parseados)
+      // Abrir checklist se nunca abrimos e não temos sinais suficientes
       const needChecklist = (!state.askedSymptomsOnce &&
-                             (!state.payload.symptoms || state.payload.symptoms.length === 0) &&
-                             !hasParsedSignals());
+                            (!state.payload.symptoms || state.payload.symptoms.length === 0) &&
+                            !hasParsedSignals());
       if (needChecklist) {
         state.askedSymptomsOnce = true;
         renderSymptoms();
@@ -420,7 +389,29 @@
     }
   }
 
+  function signatureOfResult(out) {
+    try {
+      const { local, backend } = out || {};
+      if (backend && !(backend._error || backend.error) && Array.isArray(backend.differentials)) {
+        const arr = backend.differentials.slice(0, 3).map(d => `${d.dx}:${Math.round((d.probability||0)*100)}`).join("|");
+        return `B:${arr}`;
+      }
+      if (local?.top3?.length) {
+        const arr = local.top3.map(d => `${d.dx}:${Math.round((d.norm||d.prob||0)*100)}`).join("|");
+        return `L:${arr}`;
+      }
+    } catch (_) {}
+    return "EMPTY";
+  }
+
   function renderBotFromResult(out) {
+    const sig = signatureOfResult(out);
+    if (sig === state.lastRenderSig) {
+      // evita duplicar “Hipóteses iniciais” idênticas
+      return;
+    }
+    state.lastRenderSig = sig;
+
     const { local, backend } = out || {};
     let html = "";
 
@@ -444,6 +435,9 @@
         html += `<li>${d.dx} (${pct}%)</li>`;
       });
       html += `</ul>`;
+      if (out?.backend && (out.backend._error || out.backend.error)) {
+        html += `<p class="mt-2 text-xs opacity-70">Servidor de apoio indisponível no momento; exibindo estimativa local.</p>`;
+      }
     } else {
       html += `<p>Continuo coletando informações. Conte mais sobre seus sintomas (início, intensidade, fatores que pioram/melhoram).</p>`;
     }
@@ -474,26 +468,24 @@
     addMessage("bot", html || "Ok! Pode me contar mais detalhes?");
   }
 
-  async function sendUserMessage(text) {
-    const msg = (text || inputEl.value || "").trim();
-    if (!msg) return;
-    inputEl.value = "";
-    addMessage("user", msg);
-
-    // Acumular texto bruto e reprocessar o conjunto (importante para parser)
-    state.payload.freeTextOriginal = (state.payload.freeTextOriginal ? (state.payload.freeTextOriginal + " ") : "") + msg;
-
-    // Parsear e aplicar ao estado (inclui limpeza de negações e normalização de duração)
-    const parsed = parseClinicalText(state.payload.freeTextOriginal);
-    // manter também uma cópia de demonstração caso o usuário diga idade/sexo no texto
-    applyParsedToState(parsed);
-
-    await computeAndRespond();
-  }
-
   // --------------------------
   // Relatório (PDF/print)
   // --------------------------
+  let exportBtn = null;
+  function ensureExportBtn() {
+    if (exportBtn) return exportBtn;
+    exportBtn = document.createElement("button");
+    exportBtn.id = "export-report";
+    exportBtn.type = "button";
+    exportBtn.textContent = "Gerar relatório (PDF)";
+    exportBtn.className = "mb-2 hidden rounded bg-green-600 px-3 py-1 text-white";
+    const footer = document.querySelector("footer");
+    const qr = document.getElementById("quick-replies");
+    footer.insertBefore(exportBtn, qr);
+    exportBtn.addEventListener("click", handleExportPDF);
+    return exportBtn;
+  }
+
   function handleExportPDF() {
     try {
       const last = (window.ROBOTTO && window.ROBOTTO.last && window.ROBOTTO.last()) || null;
@@ -503,7 +495,6 @@
       let body = `<h1 style="font:600 18px system-ui;margin:0 0 8px">Relatório de Triagem – OTTO</h1>`;
       body += `<p style="margin:0 0 12px">Gerado em ${new Date().toLocaleString()}</p>`;
 
-      // dados essenciais (quando disponíveis)
       const demo = [];
       if (state.payload.age != null) demo.push(`Idade: ${state.payload.age} anos`);
       if (state.payload.sex) demo.push(`Sexo: ${state.payload.sex}`);
@@ -542,7 +533,7 @@
       if (backend?.safety_note) {
         body += `<p style="opacity:.8"><em>${backend.safety_note}</em></p>`;
       }
-            // Referências (se local fornecer)
+      // Referências (se local fornecer)
       if (last?.local?.references?.length) {
         body += `<h2 style="font:600 16px system-ui;margin:16px 0 6px">Referências</h2><ol>`;
         last.local.references.forEach(r => { body += `<li>${r}</li>`; });
@@ -561,7 +552,7 @@
   }
 
   // --------------------------
-  // Consentimento + Mini‑intake
+  // Consentimento + Mini-intake
   // --------------------------
   $("#lgpd-checkbox")?.addEventListener("change", (e) => {
     const btn = $("#start-btn");
@@ -573,9 +564,9 @@
   $("#start-btn")?.addEventListener("click", () => {
     state.consented = true;
     document.getElementById("consent")?.classList.add("hidden");
-    addMessage("bot", "Olá! Eu sou o OTTO. Vou acolher e entender seu quadro para orientar com segurança. 😊");
+    addMessage("bot", "Olá! Eu sou o OTTO. Vou tentat entender o seu quadro para orientar com segurança. 😊");
 
-    // Mini‑intake overlay (se existir no HTML já ajustado)
+    // Mini-intake (se presente no HTML)
     const mini = document.getElementById("mini-intake");
     const miniForm = document.getElementById("mini-intake-form");
     const ageInput = document.getElementById("mini-age");
@@ -596,8 +587,12 @@
         if (/fem/.test(sexLabel) || /femin/.test(sexLabel)) state.payload.sex = "F";
         else if (/masc/.test(sexLabel) || /mascul/.test(sexLabel)) state.payload.sex = "M";
         else state.payload.sex = "OUTRO";
+
         closeMini();
-        addMessage("bot", "Obrigado! Idade e sexo registrados. Agora, descreva o que está sentindo.");
+        addMessage("bot", "Obrigado! Idade e sexo registrados. Agora, selecione sintomas ou descreva o que sente.");
+        // Abrir seleção de sintomas já na sequência
+        renderSymptoms();
+        openOverlay("symptom-overlay");
       });
 
       miniSkip?.addEventListener("click", () => {
@@ -605,7 +600,7 @@
         addMessage("bot", "Tudo bem. Se preferir, pode informar sua idade/sexo por texto mais tarde.");
       });
     } else {
-      // Fallback por chat, caso o overlay não exista
+      // Fallback por chat
       addMessage("bot", "Antes de começarmos, informe por favor sua idade e sexo (biológico). Ex.: “32 anos, feminino”.");
     }
   });
@@ -644,6 +639,12 @@
                      .map(i => i.value);
     state.payload.symptoms = sel;
     closeOverlay("symptom-overlay");
+
+    // Ecoar sintomas selecionados (sem calcular ainda)
+    const picked = sel.map(k => (SYMPTOMS_UI.find(s => s.key === k)?.label || k));
+    if (picked.length) addMessage("bot", `Ok. Sintomas selecionados: ${picked.join(", ")}.`);
+
+    // Segue para red flags
     renderFlags();
     openOverlay("flag-overlay");
   });
@@ -660,9 +661,37 @@
                        .map(i => i.value);
       state.payload.red_flags_reported = sel;
     }
+    state.flagsAnswered = true;
     closeOverlay("flag-overlay");
-    addMessage("bot", "Obrigado. Conte mais detalhes sobre seus sintomas ou adicione itens na seleção quando quiser.");
+
+    addMessage("bot", "Obrigado. Vou analisar suas informações.");
     computeAndRespond();
+  });
+
+  // --------------------------
+  // Form de envio (chat)
+  // --------------------------
+  $("#input-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const msg = (inputEl.value || "").trim();
+    if (!msg) return;
+    inputEl.value = "";
+    addMessage("user", msg);
+
+    // guardar texto bruto (para o parser operar sobre o conjunto)
+    state.payload.freeTextOriginal = (state.payload.freeTextOriginal ? (state.payload.freeTextOriginal + " ") : "") + msg;
+
+    // parser e aplicação ao estado
+    const parsed = parseClinicalText(state.payload.freeTextOriginal);
+    applyParsedToState(parsed);
+
+    // se red flags ainda não foram respondidas, abre overlay e só calcula depois
+    if (!state.flagsAnswered) {
+      renderFlags();
+      openOverlay("flag-overlay");
+      return;
+    }
+    await computeAndRespond();
   });
 
   // Esconder splash ao carregar
@@ -670,14 +699,6 @@
     const s = document.getElementById("splash-otto");
     if (!s) return;
     setTimeout(() => s.classList.add("fade-out"), 900);
-  });
-
-  // --------------------------
-  // Form de envio
-  // --------------------------
-  $("#input-form")?.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    await sendUserMessage();
   });
 
   // Mensagem inicial (antes do consentimento)

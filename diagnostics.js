@@ -1,36 +1,18 @@
-/* diagnostics.js (v3)
-   Predição local Top-3 para OUVIDO / NARIZ / GARGANTA / PESCOCO,
-   com parser clínico de texto livre, heurísticas por idade/sexo e follow-ups.
+/* diagnostics.js (v4, 2025-08-19)
+   Motor local de diferenciais para OUVIDO / NARIZ / GARGANTA / PESCOCO.
 
-   API (compatível):
-     localDifferentials(payload, rules) -> {
-       list: [{ dx, probability: 0..1, whyFor?: string[], whyAgainst?: string[] }],
-       confidence: 0..1,
-       gaps?: { questions?: string[], unknownSx?: string[] },
-       redFlags?: { any: boolean, patterns?: string[] },
-       notes?: string[],
-       references?: string[]                      // <— novo (para relatório)
-     }
-
-   payload esperado:
-     {
-       domain: "ouvido"|"nariz"|"garganta"|"pescoco",
-       age: number|null,
-       sex: "M"|"F"|"OUTRO"|null,
-       duration: string|null,                     // mantido (ex.: "5 dias")
-       symptoms: string[],                        // chaves do app-ui.js (ex.: "febre","dor_de_ouvido")
-       freeText: string,
-       extras?: object                            // preenchido com parsed
-     }
-
-   Aceite: “dor de garganta há 5 dias, piorando, sem tosse” recalcula sem abrir checklist.
+   Principais correções/melhorias vs v3:
+   - Mapeamento robusto das KEYS da UI → features internas (acabou o “não reagir” ao checklist).
+   - Integra parser clínico (duração/trajectória/febre máx./negações).
+   - Suporte OPCIONAL a weights/modifiers do rules_otorrino.json (se existir).
+   - Correções de vazamento e normalização de probabilidades.
+   - API compatível: localDifferentials(payload, rules) → { list, confidence, gaps, redFlags, references }
 */
 
 (function (global) {
-  // ---------------- Utils ----------------
+  // --------------- Utils ---------------
   const clamp01 = (x) => Math.max(0, Math.min(1, Number.isFinite(+x) ? +x : 0));
-  const pct = (v) => Math.round(clamp01(v) * 100);
-  const norm = (s) => (s || "").toLowerCase();
+  const norm = (s) => (s || "").toLowerCase().trim();
 
   const NUM = {
     toFloat(s) {
@@ -39,99 +21,82 @@
       const v = parseFloat(t);
       return Number.isFinite(v) ? v : null;
     },
-    daysFrom(durationText) {
-      if (!durationText) return null;
-      const t = norm(durationText);
-
-      // ex.: "há 5 dias", "5 dias", "5d", "48h", "2 semanas", "3 meses"
-      const re =
-        /\b(?:ha|há)?\s*(\d+[,.]?\d*)\s*(dias?|d|semanas?|sem|mes(?:es)?|m|horas?|h)\b/;
-      const m = t.match(re);
+    daysFrom(s) {
+      if (!s) return null;
+      const t = norm(s);
+      // "há 5 dias" | "5 dias" | "5d" | "48h" | "2 semanas" | "3 meses"
+      const m = t.match(/\b(?:ha|há)?\s*(\d+[.,]?\d*)\s*(horas?|h|dias?|d|semanas?|sem|mes(?:es)?|m)\b/);
       if (!m) return null;
-
-      const n = NUM.toFloat(m[1]);
-      const unit = m[2];
-
+      const n = this.toFloat(m[1]);
+      const u = m[2];
       if (!Number.isFinite(n)) return null;
-
-      if (/^h|horas?$/.test(unit)) return Math.max(0.04, n / 24); // >= 1h => fração de dia
-      if (/^d|dias?$/.test(unit)) return n;
-      if (/^sem|semanas?$/.test(unit)) return n * 7;
-      if (/^m|mes/.test(unit)) return n * 30;
+      if (/^h|hora/.test(u)) return Math.max(0.04, n / 24);
+      if (/^d|dia/.test(u)) return n;
+      if (/^sem/.test(u)) return n * 7;
+      if (/^m|mes/.test(u)) return n * 30;
       return null;
     },
     celsiusFromAny(s) {
       if (!s) return null;
       const t = norm(s);
-      // captura "38.5", "38,5", "38º", "38°C", "101F"
+      // “38,5 °C”, “38.5”, “101 F”
       const m = t.match(
-        /\b(3[5-9](?:[.,]\d)?|4[0-2](?:[.,]\d)?)\s*(?:°|º|graus)?\s*(c|celsius)?\b|\b(9[8-9]|1[0-1]\d(?:[.,]\d)?)\s*(?:°|º|graus)?\s*(f|fahrenheit)\b/
+        /\b(3[5-9](?:[.,]\d)?|4[0-2](?:[.,]\d)?)\s*(?:°|º|graus)?\s*(?:c|celsius)?\b|\b(9[8-9]|1[0-1]\d(?:[.,]\d)?)\s*(?:°|º|graus)?\s*(?:f|fahrenheit)\b/
       );
       if (!m) return null;
-
-      if (m[1]) {
-        return NUM.toFloat(m[1]); // já está em °C
-      }
-      if (m[3]) {
-        const f = NUM.toFloat(m[3]);
-        if (!Number.isFinite(f)) return null;
-        return +( (f - 32) / 1.8 ).toFixed(1);
+      if (m[1]) return this.toFloat(m[1]);
+      if (m[2]) {
+        const f = this.toFloat(m[2]);
+        return Number.isFinite(f) ? +(((f - 32) / 1.8).toFixed(1)) : null;
       }
       return null;
-    },
+    }
   };
 
-  function toTop3(obj) {
-    const arr = Object.entries(obj).map(([dx, p]) => ({ dx, probability: clamp01((+p || 0) / 100) }));
-    arr.sort((a, b) => b.probability - a.probability);
-    return arr.slice(0, 3);
-  }
-
-  function uniq(arr) {
-    return Array.from(new Set(arr || []));
-  }
-
-  // Bayes simples p/ testes diagnósticos (Centor/McIsaac p/ GABHS)
+  const LR = { // LRs aproximados para Centor/McIsaac combinados
+    "-1": 0.16, "0": 0.16, "1": 0.30, "2": 0.75, "3": 2.10, "4": 6.30, "5": 6.30
+  };
   function postTestProb(pre, lr) {
     pre = clamp01(pre);
-    if (pre >= 1) return 1;
+    if (pre === 0) return 0;
+    if (pre === 1) return 1;
     const odds = pre / (1 - pre);
-    const postOdds = odds * lr;
-    return postOdds / (1 + postOdds);
+    const post = odds * (lr || 1);
+    return post / (1 + post);
   }
 
-  // ---------------- Parser clínico de texto livre ----------------
-  // Extrai: duração em dias, trajetória (piorando/melhorando/estável/oscilando/dupla piora),
-  // febre máxima, dor (leve/moderada/intensa ou NRS), e negações (ex.: "sem tosse").
+  function toTopN(map, N = 3) {
+    const arr = Object.entries(map || {}).map(([dx, p]) => ({ dx, probability: clamp01((+p || 0) / 100) }));
+    arr.sort((a, b) => b.probability - a.probability);
+    return arr.slice(0, N);
+  }
+
+  // --------------- Parser clínico (texto livre) ---------------
   function parseClinicalText(text) {
     const t = norm(text || "");
 
     // duração
     let durationDays = null;
     let durationTextNorm = null;
-    const durMatch = t.match(/\b(?:ha|há)?\s*(\d+[,.]?\d*)\s*(dias?|d|semanas?|sem|mes(?:es)?|m|horas?|h)\b/);
-    if (durMatch) {
-      durationDays = NUM.daysFrom(durMatch[0]);
-      const n = NUM.toFloat(durMatch[1]);
-      const u = durMatch[2];
-      const mapU = /h/.test(u) ? "h" : /d/.test(u) ? "d" : /sem|semana/.test(u) ? "sem" : "m";
-      durationTextNorm = `${n}${mapU}`;
+    const md = t.match(/\b(?:ha|há)?\s*(\d+[.,]?\d*)\s*(horas?|h|dias?|d|semanas?|sem|mes(?:es)?|m)\b/);
+    if (md) {
+      durationDays = NUM.daysFrom(md[0]);
+      const n = NUM.toFloat(md[1]);
+      const u = /h/.test(md[2]) ? "h" : /d/.test(md[2]) ? "d" : /sem/.test(md[2]) ? "sem" : "m";
+      durationTextNorm = `${n}${u}`;
     }
 
     // trajetória
-    let trajectory = null; // "piorando" | "melhorando" | "estável" | "oscilando" | "dupla_piora"
+    let trajectory = null;
     if (/\bdupla\s+piora\b/.test(t)) trajectory = "dupla_piora";
-    else if (/\bpiorand[oa]/.test(t)) trajectory = "piorando";
-    else if (/\bmelhorand[oa]/.test(t)) trajectory = "melhorando";
-    else if (/\best[áa]vel\b/.test(t)) trajectory = "estável";
-    else if (/\boscilando|vai\s+e\s+volta|altos\s*e\s*baixos/.test(t)) trajectory = "oscilando";
+    else if (/\bpiorand[oa]\b/.test(t)) trajectory = "piorando";
+    else if (/\bmelhorand[oa]\b/.test(t)) trajectory = "melhorando";
+    else if (/\best[áa]vel\b/.test(t) || /\bigual\b/.test(t)) trajectory = "estavel";
 
     // febre máxima
     let feverMaxC = null;
-    // exemplos: "Tmax 38.5", "febre 39", "39º", "101F"
-    const feverCandidate = t.match(/\b(?:tmax|temperatura|max(?:ima)?)\s*[:=]?\s*([\d.,º°\s\w]+)\b|(?:febre|febril)\s*(?:de|até|máx\.?)?\s*([\d.,º°\s\w]+)\b/);
-    if (feverCandidate) feverMaxC = NUM.celsiusFromAny(feverCandidate[1] || feverCandidate[2]);
-    // fallback: número solto >= 37.5…
+    const mf = t.match(/\b(?:tmax|temperatura|max(?:ima)?)\s*[:=]?\s*([\d.,º°\s\w]+)\b|(?:febre|febril)\s*(?:de|até|máx\.?)?\s*([\d.,º°\s\w]+)\b/);
+    if (mf) feverMaxC = NUM.celsiusFromAny(mf[1] || mf[2]);
     if (!feverMaxC) {
       const m2 = t.match(/\b(3[7-9](?:[.,]\d)?|4[0-2](?:[.,]\d)?)\b/);
       if (m2) {
@@ -140,26 +105,21 @@
       }
     }
 
-    // dor: leve/moderada/intensa | NRS 0–10
-    let painLabel = null;
+    // dor (bucket + NRS)
+    let painLabel = null, painNRS = null;
     if (/dor\s*(?:leve|fraca|suport[aá]vel)/.test(t)) painLabel = "leve";
-    else if (/dor\s*(?:moderad[ao])/.test(t)) painLabel = "moderada";
-    else if (/dor\s*(?:intensa|forte|insuport[aá]vel|muito forte)/.test(t)) painLabel = "intensa";
-    // NRS
-    let painNRS = null;
-    const mNrs = t.match(/\b(\d{1,2})\s*\/\s*10\b|\bNRS\s*(\d{1,2})\b/);
-    if (mNrs) {
-      const n = parseInt(mNrs[1] || mNrs[2], 10);
-      if (Number.isFinite(n)) painNRS = Math.max(0, Math.min(10, n));
-      if (!painLabel) {
-        painLabel = n >= 8 ? "intensa" : n >= 4 ? "moderada" : "leve";
-      }
+    else if (/dor\s*moderad[ao]/.test(t)) painLabel = "moderada";
+    else if (/dor\s*(?:intensa|forte|muito forte|insuport[aá]vel)/.test(t)) painLabel = "intensa";
+    const mN = t.match(/\b(\d{1,2})\s*\/\s*10\b|\bnrs\s*(\d{1,2})\b/);
+    if (mN) {
+      painNRS = Math.max(0, Math.min(10, parseInt(mN[1] || mN[2], 10)));
+      if (!painLabel) painLabel = painNRS >= 8 ? "intensa" : painNRS >= 4 ? "moderada" : "leve";
     }
 
-    // negações (“sem tosse”, “nega febre”, etc.)
+    // negações
     const neg = {
+      fever: /\b(sem|nega|não tem)\s+febre\b/.test(t) || /\bafebril\b/.test(t),
       cough: /\b(sem|nega|não tem)\s+tosse\b/.test(t),
-      fever: /\b(sem|nega|não tem)\s+febre\b/.test(t),
       rhinorrhea: /\b(sem|nega|não tem)\s+(coriza|catarro)\b/.test(t),
       nasalObstruction: /\b(sem|nega|não tem)\s+(nariz\s*entupido|obstru[cç][aã]o)\b/.test(t),
       soreThroat: /\b(sem|nega|não tem)\s+(dor\s*de\s*garganta|odinof[aá]gia)\b/.test(t),
@@ -167,25 +127,17 @@
       earDischarge: /\b(sem|nega|não tem)\s+(secre[cç][aã]o|pus)\b.*ouvido/.test(t),
     };
 
-    // achados específicos úteis
+    // flags úteis
     const flags = {
       tonsilExudate: /\b(pus|placa|exsudat)/.test(t),
-      unilateral: /(um lado|s[óo]\s*(?:no|no\s*lado)\s*(?:direito|esquerdo)|apenas\s*um)/.test(t),
+      unilateral: /(um lado|apenas\s*um|s[óo]\s*(?:no\s*)?(?:direito|esquerdo))/.test(t),
       pulsatileTinnitus: /(puls[aá]til|bate|batimento).*(zumbido|ouvido)/.test(t),
     };
 
-    return {
-      durationDays,
-      durationTextNorm,
-      trajectory,
-      feverMaxC,
-      pain: { label: painLabel, nrs: painNRS },
-      negations: neg,
-      flags,
-    };
+    return { durationDays, durationTextNorm, trajectory, feverMaxC, pain: { label: painLabel, nrs: painNRS }, negations: neg, flags };
   }
 
-  // ---------------- Red flags (texto livre) ----------------
+  // --------------- Red flags ---------------
   const REDFLAG_PATTERNS = [
     /falta\s*de\s*ar|dispneia/i,
     /dificuldade\s*para\s*respirar|estridor/i,
@@ -201,102 +153,119 @@
     return { any: hits.length > 0, patterns: hits };
   }
 
-  // ---------------- Integração com rules_otorrino.json ----------------
-  // Observação: nosso app envia "symptoms" com CHAVES (ex.: "febre","dor_de_ouvido").
-  // Por isso, mapeamos diretamente essas chaves e também conferimos o texto livre.
+  // --------------- Normalização de sintomas da UI ---------------
+  // Features internas
+  const FEAT = {
+    FEVER: "fever", COUGH: "cough", SORE: "soreThroat",
+    NASAL_OBS: "nasalObstruction", RHINO: "rhinorrhea", FACIAL: "facialPressure",
+    SMELL: "smellLoss", TASTE: "tasteLoss",
+    EAR_PAIN: "earPain", EAR_FULL: "earFullness", HEAR_LOSS: "hearingLoss",
+    ITCH_EAR: "itchEar", TINNITUS: "tinnitus", DIZZ: "dizziness", PRESYNC: "presyncope",
+    HALITOSIS: "halitosis", GLOBUS: "globus", DYSPHAGIA: "dysphagia",
+    NECK_NODES: "neckNodes", SNORING: "snoring", DISCHARGE: "dischargeEar"
+  };
+
+  // keys da UI → feature interna
+  const UIKEY_TO_FEAT = {
+    febre: FEAT.FEVER,
+    tosse: FEAT.COUGH,
+    dor_de_garganta: FEAT.SORE,
+    nariz_entupido: FEAT.NASAL_OBS,
+    coriza: FEAT.RHINO,
+    pressao_na_face: FEAT.FACIAL,
+    reducao_olfato: FEAT.SMELL,
+    reducao_paladar: FEAT.TASTE,
+    dor_de_ouvido: FEAT.EAR_PAIN,
+    sensacao_ouvido_tapado: FEAT.EAR_FULL,
+    dificuldade_de_ouvir: FEAT.HEAR_LOSS,
+    coceira_no_ouvido: FEAT.ITCH_EAR,
+    zumbido: FEAT.TINNITUS,
+    tontura: FEAT.DIZZ,
+    sensacao_de_desmaio: FEAT.PRESYNC,
+    mau_halito: FEAT.HALITOSIS,
+    bolo_na_garganta: FEAT.GLOBUS,
+    disfagia: FEAT.DYSPHAGIA,
+    linfonodos_cervicais: FEAT.NECK_NODES,
+    roncos: FEAT.SNORING,
+    secrecao_otica: FEAT.DISCHARGE
+  };
+
+  // tokens comuns no rules.json → feature interna (se existir symptom_weights)
+  const RULE_TOKEN_TO_FEAT = {
+    odinofagia: FEAT.SORE,
+    rinorreia: FEAT.RHINO,
+    obstrucao_nasal: FEAT.NASAL_OBS,
+    otalgia: FEAT.EAR_PAIN,
+    otorreia: FEAT.DISCHARGE,
+    halitose: FEAT.HALITOSIS,
+    disfagia: FEAT.DYSPHAGIA,
+    adenomegalia_cervical: FEAT.NECK_NODES,
+    hiposmia: FEAT.SMELL,
+    disgeusia: FEAT.TASTE,
+    zumbido: FEAT.TINNITUS,
+    tontura: FEAT.DIZZ,
+    hipoacusia: FEAT.HEAR_LOSS,
+    pressao_facial: FEAT.FACIAL,
+    tosse: FEAT.COUGH,
+    febre: FEAT.FEVER
+  };
+
+  // extrai features booleans a partir de keys + texto + negações
   function featuresFromInput(payload, parsed) {
-    const S = new Set((payload?.symptoms || []).map(norm));
-    const t = norm(payload?.freeText || "");
+    const text = norm(payload?.freeText || "");
+    const keys = new Set((payload?.symptoms || []).map(k => norm(k)));
 
-    const has = (key) => S.has(key);
+    const hasKey = (k) => keys.has(k);
 
-    // sinais (combina checklist + texto livre, com override por negação)
-    let fever = has("febre") || /\b(febre|febril)\b/.test(t);
-    let cough = has("tosse") || /\btosse\b/.test(t);
-    let soreThroat = has("dor_de_garganta") || /\bdor de garganta|odinof[aá]gia\b/.test(t);
-    let nasalObstruction = has("nariz_entupido") || /\bobstru[cç][aã]o|nariz entupido\b/.test(t);
-    let rhinorrhea = has("coriza") || /\bcoriza|catarro\b/.test(t);
-    let facialPressure = has("pressao_na_face") || /\b(dor|press[aã]o)\s*(facial|na face)\b/.test(t);
-    let smellLoss = has("reducao_olfato") || /\b(anosmia|sem olfato)\b/.test(t);
-    let tasteLoss = has("reducao_paladar");
-    let earPain = has("dor_de_ouvido") || /otalgia|dor.*ouvido/.test(t);
-    let earFullness = has("sensacao_ouvido_tapado");
-    let hearingLoss = has("dificuldade_de_ouvir") || /\bhipoacusia|ou[cç]o pior\b/.test(t);
-    let itchEar = has("coceira_no_ouvido");
-    let tinnitus = has("zumbido");
-    let dizziness = has("tontura");
-    let presyncope = has("sensacao_de_desmaio");
-    let halitosis = has("mau_halito");
-    let globus = has("bolo_na_garganta");
-    let dysphagia = has("disfagia") || /\bdisfagia|dificuldade (?:pra|para) engolir\b/.test(t);
-    let neckNodes = has("linfonodos_cervicais") || /g[âa]nglios|caro[cç]o no pesco[cç]o|adenomegalia/.test(t);
-    let snoring = has("roncos");
-    const dischargeEar = has("secrecao_otica") || /secre[cç][aã]o|pus.*ouvido/.test(t);
+    const f = {
+      [FEAT.FEVER]: hasKey("febre") || /\bfebre|febril\b/.test(text),
+      [FEAT.COUGH]: hasKey("tosse") || /\btosse\b/.test(text),
+      [FEAT.SORE]: hasKey("dor_de_garganta") || /\bdor de garganta|odinof[aá]gia\b/.test(text),
+      [FEAT.NASAL_OBS]: hasKey("nariz_entupido") || /\bobstru[cç][aã]o|nariz entupido\b/.test(text),
+      [FEAT.RHINO]: hasKey("coriza") || /\bcoriza|catarro\b/.test(text),
+      [FEAT.FACIAL]: hasKey("pressao_na_face") || /\b(dor|press[aã]o)\s*(facial|na face)\b/.test(text),
+      [FEAT.SMELL]: hasKey("reducao_olfato") || /\b(anosmia|sem olfato)\b/.test(text),
+      [FEAT.TASTE]: hasKey("reducao_paladar"),
+      [FEAT.EAR_PAIN]: hasKey("dor_de_ouvido") || /\botalgia|dor.*ouvido\b/.test(text),
+      [FEAT.EAR_FULL]: hasKey("sensacao_ouvido_tapado"),
+      [FEAT.HEAR_LOSS]: hasKey("dificuldade_de_ouvir") || /\bhipoacusia|ou[cç]o pior\b/.test(text),
+      [FEAT.ITCH_EAR]: hasKey("coceira_no_ouvido"),
+      [FEAT.TINNITUS]: hasKey("zumbido"),
+      [FEAT.DIZZ]: hasKey("tontura"),
+      [FEAT.PRESYNC]: hasKey("sensacao_de_desmaio"),
+      [FEAT.HALITOSIS]: hasKey("mau_halito"),
+      [FEAT.GLOBUS]: hasKey("bolo_na_garganta"),
+      [FEAT.DYSPHAGIA]: hasKey("disfagia") || /\bdisfagia|dificuldade (?:pra|para) engolir\b/.test(text),
+      [FEAT.NECK_NODES]: hasKey("linfonodos_cervicais") || /g[âa]nglios|caro[cç]o no pesco[cç]o|adenomegalia/.test(text),
+      [FEAT.SNORING]: hasKey("roncos"),
+      [FEAT.DISCHARGE]: hasKey("secrecao_otica") || /secre[cç][aã]o|pus.*ouvido/.test(text),
+      unilateral: parsed?.flags?.unilateral || /(um lado|apenas\s*um|s[óo]\s*(?:no\s*)?(?:direito|esquerdo))/.test(text),
+      pulsatileTinnitus: parsed?.flags?.pulsatileTinnitus || /(puls[aá]til|bate|batimento).*(zumbido|ouvido)/.test(text)
+    };
 
-    // negações (parser) têm precedência
+    // aplicar negações do parser (precedência)
     if (parsed?.negations) {
-      if (parsed.negations.fever) fever = false;
-      if (parsed.negations.cough) cough = false;
-      if (parsed.negations.soreThroat) soreThroat = false;
-      if (parsed.negations.nasalObstruction) nasalObstruction = false;
-      if (parsed.negations.rhinorrhea) rhinorrhea = false;
-      if (parsed.negations.earPain) earPain = false;
-      if (parsed.negations.earDischarge) {
-        // só nega se não veio marcado explicitamente no checklist
-        if (!has("secrecao_otica")) {
-          // manter 'dischargeEar' coerente
-          // (não zera o texto livre se o usuário marcou a opção)
-          // aqui zeramos apenas se não veio marcado
-          // eslint-disable-next-line no-var
-          var _dischargeEar = false;
-        }
-      }
+      if (parsed.negations.fever) f[FEAT.FEVER] = false;
+      if (parsed.negations.cough) f[FEAT.COUGH] = false;
+      if (parsed.negations.soreThroat) f[FEAT.SORE] = false;
+      if (parsed.negations.nasalObstruction) f[FEAT.NASAL_OBS] = false;
+      if (parsed.negations.rhinorrhea) f[FEAT.RHINO] = false;
+      if (parsed.negations.earPain) f[FEAT.EAR_PAIN] = false;
+      if (parsed.negations.earDischarge) f[FEAT.DISCHARGE] = keys.has("secrecao_otica"); // só mantém se marcado explicitamente
     }
 
-    // flags adicionais
-    const unilateral =
-      parsed?.flags?.unilateral ||
-      /(um lado|lateral|s[óo] no direito|s[óo] no esquerdo)/.test(t);
-    const pulsatileTinnitus = parsed?.flags?.pulsatileTinnitus || /(puls[aá]til|bate|batimento).*(zumbido|ouvido)/.test(t);
-
-    return {
-      fever,
-      cough,
-      soreThroat,
-      nasalObstruction,
-      rhinorrhea,
-      facialPressure,
-      smellLoss,
-      tasteLoss,
-      earPain,
-      earFullness,
-      hearingLoss,
-      itchEar,
-      tinnitus,
-      dizziness,
-      presyncope,
-      halitosis,
-      globus,
-      dysphagia,
-      neckNodes,
-      snoring,
-      dischargeEar: parsed?.negations?.earDischarge ? false : dischargeEar,
-      unilateral,
-      pulsatileTinnitus,
-    };
+    return f;
   }
 
-  // ---------------- Follow-ups (contextuais) ----------------
+  // --------------- Follow-ups ---------------
   function followupQuestions(top3, input, parsed) {
     const qs = [];
     const add = (q) => { if (q && !qs.includes(q)) qs.push(q); };
-
     const traj = parsed?.trajectory;
     const dur = parsed?.durationDays ?? null;
 
-    for (const item of top3 || []) {
-      const name = norm(item.dx || "");
-
+    for (const it of top3 || []) {
+      const name = norm(it.dx || "");
       // OUVIDO
       if (name.includes("otite externa")) {
         add("Teve exposição a água/piscina recentemente?");
@@ -310,7 +279,7 @@
       }
       if (name.includes("disfunção tub") || name.includes("otite serosa")) {
         add("A sensação de ouvido tapado piora com resfriados ou mudanças de altitude/voo?");
-        add("Sente pressão no ouvido ao engolir/bocejar?");
+        add("Sente pressão ao engolir/bocejar?");
       }
       if (name.includes("perda auditiva súbita")) {
         add("A perda auditiva começou de repente (horas/dia)?");
@@ -320,11 +289,10 @@
         add("O zumbido acompanha batimentos (pulsátil)?");
         add("O zumbido é de um lado só?");
       }
-
       // NARIZ
       if (name.includes("rinossinusite crônica")) {
         add("Há quanto tempo os sintomas persistem (semanas/meses)?");
-        add("Há secreção nasal espessa/amarelada ou pressão que piora ao abaixar a cabeça?");
+        add("Há secreção espessa/amarelada e pressão que piora ao abaixar a cabeça?");
         add("Teve redução importante do olfato?");
       }
       if (name.includes("rinite al")) {
@@ -341,7 +309,6 @@
         add("O sangramento foi unilateral e durou mais de 10 minutos?");
         add("Usa anticoagulantes ou antiagregantes?");
       }
-
       // GARGANTA
       if (name.includes("estrept") || name.includes("gabhs")) {
         add("Há placas/pus nas amígdalas?");
@@ -358,7 +325,6 @@
         add("Há quantas semanas está rouco(a)? Passa de 3–4 semanas?");
         add("Fuma ou trabalha em ambiente com pó/químicos?");
       }
-
       // PESCOÇO
       if (name.includes("linfadenite") || name.includes("linfadenop")) {
         add("O caroço no pescoço é doloroso ao toque?");
@@ -367,14 +333,12 @@
       }
     }
 
-    // Fallback genérico
     if (qs.length === 0) {
       add("Quando os sintomas começaram e como evoluíram desde então?");
       add("Algo piora ou alivia os sintomas?");
       add("Teve febre, secreções ou dor muito intensa?");
     }
 
-    // Enxugar (não perguntar o que já sabemos pela trajetória/duração)
     if (traj) {
       const i = qs.findIndex(q => /evolu[iç]ão|começaram/.test(norm(q)));
       if (i >= 0) qs.splice(i, 1);
@@ -383,13 +347,10 @@
       const j = qs.findIndex(q => /quando os sintomas começaram/.test(norm(q)));
       if (j >= 0) qs.splice(j, 1);
     }
-
     return qs.slice(0, 6);
   }
 
-  // ---------------- Módulos por domínio ----------------
-
-  // Garganta (Centor/McIsaac + texto)
+  // --------------- Heurísticas por domínio ---------------
   function dx_garganta(input, parsed) {
     const f = featuresFromInput(input, parsed);
     const age = input.age ?? 30;
@@ -397,40 +358,35 @@
     const out = {};
     const why = {};
 
-    // Centor/McIsaac
     let score = 0;
-    if (f.fever) score += 1;
-    if (!f.cough) score += 1;
-    if (f.neckNodes) score += 1;
-    const tonsilExudate = parsed?.flags?.tonsilExudate || (f.soreThroat && /(pus|placa|exsudat)/.test(txt));
+    if (f[FEAT.FEVER]) score += 1;
+    if (!f[FEAT.COUGH]) score += 1;
+    if (f[FEAT.NECK_NODES]) score += 1;
+    const tonsilExudate = parsed?.flags?.tonsilExudate || (f[FEAT.SORE] && /(pus|placa|exsudat)/.test(txt));
     if (tonsilExudate) score += 1;
 
     let pre = 0.10;
     if (age >= 3 && age <= 14) { score += 1; pre = 0.25; }
     else if (age >= 45) { score -= 1; pre = 0.10; }
 
-    // Trajetória: piora após 3–5d favorece bacteriana levemente
     if (parsed?.trajectory === "piorando" && (parsed?.durationDays ?? 0) >= 3) {
       score = Math.min(5, score + 1);
     }
 
-    const lrMap = { "-1": 0.16, "0": 0.16, "1": 0.3, "2": 0.75, "3": 2.1, "4": 6.3, "5": 6.3 };
-    const lr = lrMap[String(score)] ?? 0.75;
-    const pGabhs = postTestProb(pre, lr);
+    const pGabhs = postTestProb(pre, LR[String(score)] ?? 0.75);
 
     if (pGabhs > 0) {
       out["Faringite estreptocócica (GABHS)"] = pGabhs * 100;
       why["Faringite estreptocócica (GABHS)"] = [
-        f.soreThroat ? "odinofagia" : null,
-        !f.cough ? "sem tosse" : null,
-        f.fever ? "febre" : null,
+        f[FEAT.SORE] ? "odinofagia" : null,
+        !f[FEAT.COUGH] ? "sem tosse" : null,
+        f[FEAT.FEVER] ? "febre" : null,
         tonsilExudate ? "placas/exsudato" : null,
-        (age >= 3 && age <= 14) ? "faixa etária pediátrica (McIsaac)" : (age >= 45 ? "idade ≥45 reduz a pontuação" : null),
+        (age >= 3 && age <= 14) ? "faixa pediátrica (McIsaac)" : (age >= 45 ? "idade ≥45 reduz" : null),
         parsed?.trajectory === "piorando" ? "trajetória de piora" : null,
       ].filter(Boolean);
     }
 
-    // Mononucleose — apenas sugestivo
     const extremeFatigue = /(cansa[cç]o extremo|exaust[aã]o|muito cansad)/.test(txt);
     const pMono = tonsilExudate && extremeFatigue ? 0.6 : 0.05;
     if (pMono > 0.05) {
@@ -438,11 +394,9 @@
       why["Mononucleose infecciosa"] = ["exsudato + fadiga importante"];
     }
 
-    // Viral = resto
     const pViral = clamp01(1 - clamp01(pGabhs) - clamp01(pMono));
     out["Faringite viral inespecífica"] = Math.max(out["Faringite viral inespecífica"] || 0, pViral * 100);
 
-    // Disfonia/Laringe
     if (/rouquid[aã]o|disfonia|voz rouca|voz cansada/.test(txt)) {
       const weeks = /(\d+)\s*semana/.test(input.duration || parsed?.durationTextNorm || "") ? parseInt(RegExp.$1, 10) : null;
       if (/sangue na saliva|perda de peso|caro[cç]o no pesco[cç]o/.test(txt)) {
@@ -454,15 +408,10 @@
       }
     }
 
-    const list = toTop3(out).map(item => ({
-      ...item,
-      whyFor: why[item.dx] || undefined
-    }));
-    const confidence = list[0]?.probability ?? 0.6;
-    return { list, confidence };
+    const list = toTopN(out).map(i => ({ ...i, whyFor: why[i.dx] || undefined }));
+    return { list, confidence: list[0]?.probability ?? 0.6 };
   }
 
-  // Ouvido
   function dx_ouvido(input, parsed) {
     const f = featuresFromInput(input, parsed);
     const txt = norm(input.freeText || "");
@@ -470,123 +419,91 @@
     const out = {};
     const why = {};
 
-    const primaryOtologic = f.hearingLoss || f.earFullness || f.dischargeEar || f.earPain;
+    const primary = f[FEAT.HEAR_LOSS] || f[FEAT.EAR_FULL] || f[FEAT.DISCHARGE] || f[FEAT.EAR_PAIN];
 
-    if (primaryOtologic) {
-      if (parsed?.durationDays != null && parsed.durationDays > 2 && f.earPain && f.fever) {
-        out["Otite média aguda"] = 88;
+    if (primary) {
+      if ((parsed?.durationDays ?? 0) > 2 && f[FEAT.EAR_PAIN] && f[FEAT.FEVER]) {
+        out["Otite média aguda"] = Math.max(out["Otite média aguda"] || 0, 88);
         why["Otite média aguda"] = ["otalgia + febre", `duração ${Math.round(parsed.durationDays)}d`];
       }
-      if (f.itchEar || /puxar.*orelha|dor ao tocar/.test(txt) || /(piscina|mergulho|entrou [áa]gua|nado)/.test(txt)) {
+      if (f[FEAT.ITCH_EAR] || /puxar.*orelha|dor ao tocar/.test(txt) || /(piscina|mergulho|entrou [áa]gua|nado)/.test(txt)) {
         out["Otite externa aguda"] = Math.max(out["Otite externa aguda"] || 0, 90);
         why["Otite externa aguda"] = ["dor ao toque/puxar", "coceira", "exposição à água/piscina"];
       }
-      if (f.earFullness && !f.fever && !f.dischargeEar) {
+      if (f[FEAT.EAR_FULL] && !f[FEAT.FEVER] && !f[FEAT.DISCHARGE]) {
         out["Disfunção tubária / otite serosa"] = Math.max(out["Disfunção tubária / otite serosa"] || 0, 70);
-        why["Disfunção tubária / otite serosa"] = ["plenitude auricular sem febre/secreção"];
+        why["Disfunção tubária / otite serosa"] = ["plenitude sem febre/secreção"];
       }
       if (!out["Otite externa aguda"] && !out["Otite média aguda"] && !out["Disfunção tubária / otite serosa"]) {
         out["Outra causa otogênica"] = 100;
       }
     } else {
-      if (/mastigar|abrir a boca/.test(txt)) {
-        out["DTM (ATM)/mastigação – otalgia referida"] = 65;
-      } else if (f.soreThroat) {
-        out["Origem faríngea (faringite/amigdalite) – otalgia referida"] = 90;
-      } else {
-        out["Otalgia referida (dental/oral/cervical)"] = 100;
-      }
+      if (/mastigar|abrir a boca/.test(txt)) out["DTM (ATM)/mastigação – otalgia referida"] = 65;
+      else if (f[FEAT.SORE]) out["Origem faríngea (faringite/amigdalite) – otalgia referida"] = 90;
+      else out["Otalgia referida (dental/oral/cervical)"] = 100;
     }
 
-    // Zumbido / perda auditiva
-    if (f.tinnitus) {
-      if (f.pulsatileTinnitus) {
-        out["Zumbido pulsátil (avaliar causas vasculares)"] = 100;
-      } else if (f.unilateral && (f.hearingLoss || /s[úu]bita|piorou r[aá]pido/.test(txt))) {
+    if (f[FEAT.TINNITUS]) {
+      if (f.pulsatileTinnitus) out["Zumbido pulsátil (avaliar causas vasculares)"] = 100;
+      else if (f.unilateral && (f[FEAT.HEAR_LOSS] || /s[úu]bita|piorou r[aá]pido/.test(txt)))
         out["Perda auditiva súbita/assimétrica (prioritário)"] = Math.max(out["Perda auditiva súbita/assimétrica (prioritário)"] || 0, 85);
-      } else if (f.hearingLoss) {
-        out["Perda auditiva neurossensorial (presbiacusia/ruído)"] = Math.max(out["Perda auditiva neurossensorial (presbiacusia/ruído)"] || 0, 70);
-      } else {
-        out["Zumbido não pulsátil inespecífico"] = Math.max(out["Zumbido não pulsátil inespecífico"] || 0, 70);
-      }
+      else if (f[FEAT.HEAR_LOSS]) out["Perda auditiva neurossensorial (presbiacusia/ruído)"] = Math.max(out["Perda auditiva neurossensorial (presbiacusia/ruído)"] || 0, 70);
+      else out["Zumbido não pulsátil inespecífico"] = Math.max(out["Zumbido não pulsátil inespecífico"] || 0, 70);
     }
 
-    // Heurísticas por idade
     if (age != null) {
-      if (age <= 6) {
-        // Crianças pequenas: aumenta chance de OMA
-        out["Otite média aguda"] = Math.max(out["Otite média aguda"] || 0, 85);
-      }
-      if (age >= 60 && f.hearingLoss) {
-        out["Perda auditiva neurossensorial (presbiacusia/ruído)"] = Math.max(out["Perda auditiva neurossensorial (presbiacusia/ruído)"] || 0, 80);
-      }
+      if (age <= 6) out["Otite média aguda"] = Math.max(out["Otite média aguda"] || 0, 85);
+      if (age >= 60 && f[FEAT.HEAR_LOSS]) out["Perda auditiva neurossensorial (presbiacusia/ruído)"] = Math.max(out["Perda auditiva neurossensorial (presbiacusia/ruído)"] || 0, 80);
     }
 
-    const list = toTop3(out);
-    const confidence = list[0]?.probability ?? 0.65;
-    return { list, confidence };
+    const list = toTopN(out);
+    return { list, confidence: list[0]?.probability ?? 0.65 };
   }
 
-  // Nariz
   function dx_nariz(input, parsed) {
     const f = featuresFromInput(input, parsed);
     const txt = norm(input.freeText || "");
     const age = input.age ?? null;
     const out = {};
 
-    // ABRS (IDSA): dupla piora ou ≥10 dias, febre alta 39 + secreção purulenta
     const dupWorse = parsed?.trajectory === "dupla_piora";
     const longSymptoms = (parsed?.durationDays ?? 0) >= 10;
     const highFever = (parsed?.feverMaxC ?? 0) >= 39;
-    const purulentClues = /purul|amarel|esverde/.test(txt) || (f.rhinorrhea && /gross[ao]|espess/.test(txt));
+    const purulent = /purul|amarel|esverde/.test(txt) || (f[FEAT.RHINO] && /gross[ao]|espess/.test(txt));
 
-    if ((dupWorse || longSymptoms || (highFever && purulentClues)) && (f.facialPressure || f.nasalObstruction)) {
+    if ((dupWorse || longSymptoms || (highFever && purulent)) && (f[FEAT.FACIAL] || f[FEAT.NASAL_OBS])) {
       out["Rinossinusite bacteriana"] = 75;
     }
 
-    const CRS = (f.nasalObstruction || f.rhinorrhea) && (f.facialPressure || f.smellLoss) && (parsed?.durationDays ?? 0) >= 12*7;
+    const CRS = (f[FEAT.NASAL_OBS] || f[FEAT.RHINO]) && (f[FEAT.FACIAL] || f[FEAT.SMELL]) && (parsed?.durationDays ?? 0) >= 12 * 7;
     if (CRS) {
-      if (f.smellLoss && /(complet[ao]|sem olfato)/.test(txt)) {
+      if (f[FEAT.SMELL] && /(complet[ao]|sem olfato)/.test(txt)) {
         out["Rinossinusite crônica com polipose"] = 90;
         out["Rinossinusite crônica não poliposa"] = 10;
       } else {
         out["Rinossinusite crônica provável"] = Math.max(out["Rinossinusite crônica provável"] || 0, 75);
       }
     } else if (!out["Rinossinusite bacteriana"]) {
-      // Alérgica
-      const allergicHints = /coceir|espirr/.test(txt) || (f.rhinorrhea && !f.fever);
-      if (allergicHints) {
-        out["Rinite alérgica"] = 80;
-      }
-      // Viral/inespecífica
-      if (f.nasalObstruction || f.rhinorrhea || f.facialPressure) {
-        out["Rinite inespecífica / resfriado"] = Math.max(out["Rinite inespecífica / resfriado"] || 0, 70);
-      }
+      const allergic = /coceir|espirr/.test(txt) || (f[FEAT.RHINO] && !f[FEAT.FEVER]);
+      if (allergic) out["Rinite alérgica"] = 80;
+      if (f[FEAT.NASAL_OBS] || f[FEAT.RHINO] || f[FEAT.FACIAL]) out["Rinite inespecífica / resfriado"] = Math.max(out["Rinite inespecífica / resfriado"] || 0, 70);
     }
 
-    // Epistaxe
-    if (/sangr|epistax/.test(txt)) {
-      out["Epistaxe (sangramento nasal)"] = Math.max(out["Epistaxe (sangramento nasal)"] || 0, 70);
-    }
+    if (/sangr|epistax/.test(txt)) out["Epistaxe (sangramento nasal)"] = Math.max(out["Epistaxe (sangramento nasal)"] || 0, 70);
 
-    // Idade: rinite alérgica mais prevalente em jovens/adolescentes
-    if (age != null && age <= 25) {
-      out["Rinite alérgica"] = Math.max(out["Rinite alérgica"] || 0, 85);
-    }
+    if (age != null && age <= 25) out["Rinite alérgica"] = Math.max(out["Rinite alérgica"] || 0, 85);
 
-    const list = toTop3(out);
-    const confidence = list[0]?.probability ?? 0.6;
-    return { list, confidence };
+    const list = toTopN(out);
+    return { list, confidence: list[0]?.probability ?? 0.6 };
   }
 
-  // Pescoço
   function dx_pescoco(input, parsed) {
     const f = featuresFromInput(input, parsed);
     const txt = norm(input.freeText || "");
     const out = {};
 
-    if (f.neckNodes) {
-      if (f.fever || f.soreThroat || f.rhinorrhea) {
+    if (f[FEAT.NECK_NODES]) {
+      if (f[FEAT.FEVER] || f[FEAT.SORE] || f[FEAT.RHINO]) {
         out["Linfadenite reativa/infecciosa cervical"] = 70;
         out["Linfadenopatia inespecífica"] = 30;
       } else if (/perda de peso|noit(es)? suadas|cansa[cç]o prolongado/.test(txt)) {
@@ -599,60 +516,157 @@
       out["Queixa de pescoço inespecífica"] = 100;
     }
 
-    const list = toTop3(out);
-    const confidence = list[0]?.probability ?? 0.55;
-    return { list, confidence };
+    const list = toTopN(out);
+    return { list, confidence: list[0]?.probability ?? 0.55 };
   }
 
-  // ---------------- Referências (para relatório) ----------------
+  // --------------- Regras (opcional) ---------------
+  // Se existir rules.domains[domain].dx[].symptom_weights e .modifiers, aplicamos como “nudge”.
+  function computeByRules(payload, parsed, rules) {
+    if (!rules || !payload?.domain) return {};
+    const dom = rules.domains?.[payload.domain];
+    if (!dom || !Array.isArray(dom.dx)) return {};
+
+    const f = featuresFromInput(payload, parsed);
+    const out = {};
+
+    for (const d of dom.dx) {
+      const name = d.name || d.dx || "dx";
+      let p = clamp01(+d.prior || 0.15); // prior em 0..1
+
+      // symptom_weights: tokens (ex.: odinofagia) → peso absoluto (0..1) ou delta
+      const sw = d.symptom_weights || {};
+      for (const token in sw) {
+        const feat = RULE_TOKEN_TO_FEAT[token];
+        if (!feat) continue;
+        const present = !!f[feat];
+        const w = +sw[token] || 0;
+        if (present) p = clamp01(p + w); // simples: prior + somatório de pesos presentes
+      }
+
+      // modifiers (idade, duração, febre, trajetória, negations)
+      const mod = d.modifiers || {};
+      const dd = parsed?.durationDays ?? null;
+      const tmax = parsed?.feverMaxC ?? null;
+
+      if (Array.isArray(mod.age) && payload.age != null) {
+        for (const m of mod.age) {
+          if ((m.lte != null && payload.age <= m.lte) || (m.gte != null && payload.age >= m.gte)) {
+            if (m.boost != null) p = clamp01(p + m.boost);
+            if (m.multiplier != null) p = clamp01(p * m.multiplier);
+          }
+        }
+      }
+      if (Array.isArray(mod.duration_days) && dd != null) {
+        for (const m of mod.duration_days) {
+          if ((m.lte != null && dd <= m.lte) || (m.gte != null && dd >= m.gte)) {
+            if (m.boost != null) p = clamp01(p + m.boost);
+            if (m.multiplier != null) p = clamp01(p * m.multiplier);
+          }
+        }
+      }
+      if (Array.isArray(mod.fever_max_c) && tmax != null) {
+        for (const m of mod.fever_max_c) {
+          if ((m.lte != null && tmax <= m.lte) || (m.gte != null && tmax >= m.gte)) {
+            if (m.boost != null) p = clamp01(p + m.boost);
+            if (m.multiplier != null) p = clamp01(p * m.multiplier);
+          }
+        }
+      }
+      if (Array.isArray(mod.trajectory) && parsed?.trajectory) {
+        for (const m of mod.trajectory) {
+          if (m.is && norm(m.is) === norm(parsed.trajectory)) {
+            if (m.min_duration_days == null || (dd != null && dd >= m.min_duration_days)) {
+              if (m.boost != null) p = clamp01(p + m.boost);
+              if (m.multiplier != null) p = clamp01(p * m.multiplier);
+            }
+          }
+        }
+      }
+      if (mod.negations) {
+        for (const tok in mod.negations) {
+          const feat = RULE_TOKEN_TO_FEAT[tok] || tok;
+          const neg = parsed?.negations;
+          if (feat === FEAT.COUGH && neg?.cough) p = clamp01(p + (+mod.negations[tok] || 0));
+          if (feat === FEAT.FEVER && neg?.fever) p = clamp01(p + (+mod.negations[tok] || 0));
+        }
+      }
+
+      out[name] = Math.round(p * 100);
+    }
+    return out;
+  }
+
+  function blendMaps(primary /*heurísticas*/, secondary /*rules*/, w = 0.6) {
+    const out = { ...primary };
+    const keys = new Set([...Object.keys(primary || {}), ...Object.keys(secondary || {})]);
+    for (const k of keys) {
+      const a = +primary[k] || 0, b = +secondary[k] || 0;
+      out[k] = Math.round(clamp01((w * (a / 100) + (1 - w) * (b / 100))) * 100);
+    }
+    return out;
+  }
+
+  // --------------- Referências (para relatório se necessário) ---------------
   const REFERENCES = [
-    "IDSA. Clinical Practice Guideline for Acute Bacterial Rhinosinusitis in Children and Adults.",
-    "IDSA. Clinical Practice Guideline for Group A Streptococcal Pharyngitis.",
-    "AAP/AAO-HNS. Clinical Practice Guideline: Acute Otitis Media.",
-    "AAO-HNSF. Clinical Practice Guideline: Dysphonia (Hoarseness).",
-    "AAO-HNSF. Clinical Practice Guideline: Sudden Hearing Loss.",
+    "IDSA – ABRS (rinossinusite aguda bacteriana).",
+    "IDSA – Faringite por Streptococcus (Centor/McIsaac).",
+    "AAP/AAO-HNS – Otite Média Aguda.",
+    "AAO-HNSF – Disfonia/rouquidão.",
+    "AAO-HNSF – Perda auditiva súbita."
   ];
 
-  // ---------------- API Única ----------------
+  // --------------- API pública ---------------
   function localDifferentials(payload, rules) {
     if (!payload || !payload.domain) {
       return { list: [], confidence: 0, notes: ["domínio ausente"], references: REFERENCES.slice() };
     }
 
-    // Parser clínico + projeção no payload (para backend também aproveitar)
+    // parser clínico e projeção no payload
     const parsed = parseClinicalText(payload.freeText || "");
     payload.extras = Object.assign({}, payload.extras || {}, { parsed });
-    if (!payload.duration && parsed.durationTextNorm) {
-      payload.duration = parsed.durationTextNorm; // normaliza p/ "5d", "2sem", etc.
-    }
+    if (!payload.duration && parsed.durationTextNorm) payload.duration = parsed.durationTextNorm;
 
-    // Red flags por texto
+    // red flags
     const redFlags = detectRedFlags(payload.freeText);
 
-    // Seleção por domínio
+    // heurísticas por domínio
     let base;
     switch (payload.domain) {
       case "garganta": base = dx_garganta(payload, parsed); break;
       case "ouvido":   base = dx_ouvido(payload, parsed);   break;
       case "nariz":    base = dx_nariz(payload, parsed);    break;
       case "pescoco":  base = dx_pescoco(payload, parsed);  break;
-      default:
-        return { list: [], confidence: 0, notes: ["domínio desconhecido"], references: REFERENCES.slice() };
+      default: return { list: [], confidence: 0, notes: ["domínio desconhecido"], references: REFERENCES.slice() };
     }
 
-    // gaps: perguntas e sintomas “desconhecidos” (aqui não usamos rules para validar rótulos)
-    const questions = followupQuestions(base.list, payload, parsed);
-    const unknownSx = []; // mantemos vazio para não “punir” entrada livre via chaves do app
+    // opcional: aplicar rules (se existirem) como “nudge”
+    let finalList = base.list;
+    if (rules && rules.domains && rules.domains[payload.domain]) {
+      const ruleMap = computeByRules(payload, parsed, rules); // {dx: 0..100}
+      const baseMap = {};
+      for (const i of base.list || []) baseMap[i.dx] = Math.round((i.probability || 0) * 100);
+      const blended = blendMaps(baseMap, ruleMap, 0.7); // heurística 70% + rules 30%
+      finalList = toTopN(blended);
+    }
+
+    // follow-ups
+    const questions = followupQuestions(finalList, payload, parsed);
+    const unknownSx = (payload?.symptoms || []).filter(k => !UIKEY_TO_FEAT.hasOwnProperty(k));
+
+    // confiança = prob do top1
+    const confidence = finalList[0]?.probability ?? base.confidence ?? 0.6;
 
     return {
-      ...base,
+      list: finalList,
+      confidence,
       gaps: { questions, unknownSx },
       redFlags,
-      references: REFERENCES.slice(),
+      references: REFERENCES.slice()
     };
   }
 
-  // Expor
   if (typeof window !== "undefined") window.localDifferentials = localDifferentials;
   if (typeof module !== "undefined") module.exports = { localDifferentials, parseClinicalText };
 })(typeof window !== "undefined" ? window : globalThis);
+    
