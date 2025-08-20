@@ -1,5 +1,9 @@
-// app-ui.js (v4 — fluxo fluido: sintomas → flags uma vez, perguntas Sim/Não)
-// Coordena a UI e orquestra o fluxo com ROBOTTO.run() e diagnostics.js v4.
+// app-ui.js (v5 — fluxo unificado + perguntas deduplicadas + flags 1x)
+// - Entrada unificada: texto livre e seleção de sintomas alimentam o MESMO payload.
+// - Pipeline único: motor local (diagnostics) + backend (sempre que houver conteúdo clínico).
+// - Dedup de perguntas SIM/NÃO por chave semântica (evita perguntar 2x sobre febre).
+// - Flags exibidas uma única vez (cartão compacto); detalhes completos só no PDF.
+// - UX com pouco “barulho”: sem “obrigado…” repetitivos; spinner curto “Analisando…”.
 
 (function () {
   // --------------------------
@@ -10,8 +14,7 @@
     flagsAnswered: false,          // flags respondidas pelo usuário
     _flagsOpenedOnce: false,       // garante que overlay de flags abre no máx. 1 vez
     askedSymptomsOnce: false,      // se já abrimos o checklist de sintomas
-    lastRenderSig: null,           // evita render duplicado
-    lastAskedQuestion: null,       // evita repetir a mesma pergunta Sim/Não
+    lastRenderSig: null,           // evita render duplicado de bloco grande
     payload: {
       domain: null,
       age: null,
@@ -30,13 +33,19 @@
       medications: [],
       red_flags_reported: []
     },
-    rulesUrl: "./rules_otorrino.json"
+    rulesUrl: "./rules_otorrino.json",
+
+    // Ephemera (não vai para backend)
+    UX: {
+      askedKeys: new Set(),        // chaves de perguntas já feitas (dedup semântico)
+      flagsCardShownSig: null      // evita repetir o cartão de flags no chat
+    }
   };
 
-  // Opcional: reforçar política (também está no index.html; manter aqui é inofensivo)
+  // Config opcional (pode também vir no index.html).
   if (window.ROBOTTO?.setConfig) {
     window.ROBOTTO.setConfig({
-      CALL_LLM_POLICY: "balanced",
+      CALL_LLM_POLICY: "gpt_preferred", // prioriza raciocínio do backend nas interações
       LOCAL_CONF_THRESHOLD: 0.72,
       HYBRID_BACKEND_WEIGHT: 0.6
     });
@@ -130,7 +139,6 @@
     typingNode = null;
   }
 
-  // Quick replies padrão + handler custom
   function setQuickReplies(items = [], onClick) {
     quickEl.innerHTML = "";
     const suggestions = items.length ? items : [
@@ -204,7 +212,6 @@
 
   function parseDemographicsFromText(t) {
     const res = {};
-    // "39 anos" | "39" seguido de , masculino/feminino
     const mAge = t.match(/\b(\d{1,3})\s*anos?\b/) || t.match(/\b(\d{1,3})\b\s*(?:,|\s)\s*(?:masculin[oa]|feminin[oa]|homem|mulher|masc|fem)\b/i);
     if (mAge) {
       const age = parseInt(mAge[1], 10);
@@ -366,6 +373,22 @@
   }
 
   // --------------------------
+  // Perguntas: key semântica p/ dedup
+  // --------------------------
+  function questionKey(text) {
+    const s = (text || "").toLowerCase();
+    if (/febre.*(hoje|agora)/.test(s)) return "fever_today";
+    if (/teve\s+febre|tem\s+febre/.test(s)) return "fever_any";
+    if (/quantos\s+dias|come[cç]aram.*h[aá]/.test(s)) return "duration_any";
+    if (/piorando|melhorando|iguais|est[aá]veis/.test(s)) return "trajectory_any";
+    if (/dupla\s+piora/.test(s)) return "double_worsening";
+    if (/exsudat|placas/.test(s)) return "tonsil_exudate";
+    if (/pavilh[aã]o.*puxar|tocar.*aumenta.*dor/.test(s)) return "pinna_tug_pain";
+    if (/sai.*secre[cç][aã]o.*ouvido/.test(s)) return "otorrhea";
+    return s.replace(/\s+/g, "_").slice(0, 64);
+  }
+
+  // --------------------------
   // Integração com ROBOTTO
   // --------------------------
   async function computeAndRespond() {
@@ -424,11 +447,12 @@
     return "EMPTY";
   }
 
-  // Pergunta SIM/NÃO contextual
+  // Pergunta SIM/NÃO contextual (dedup por chave)
   function askYesNo(question) {
     if (!question) return;
-    if (state.lastAskedQuestion === question) return; // evita repetir
-    state.lastAskedQuestion = question;
+    const key = questionKey(question);
+    if (state.UX.askedKeys.has(key)) return;
+    state.UX.askedKeys.add(key);
 
     addMessage("bot", `<strong>Pergunta rápida:</strong> ${question}`);
     setQuickReplies(["Sim", "Não", "Não sei"], (answer) => {
@@ -440,17 +464,23 @@
 
   function renderBotFromResult(out) {
     const sig = signatureOfResult(out);
-    if (sig === state.lastRenderSig) return; // evita duplicar
+    if (sig === state.lastRenderSig) return; // evita duplicar bloco idêntico
     state.lastRenderSig = sig;
 
     const { local, backend } = out || {};
     let html = "";
 
+    // Flags (cartão no chat apenas 1x por conteúdo)
     const hasBackendFlags = Array.isArray(backend?.red_flags) && backend.red_flags.length > 0;
     if (hasBackendFlags) {
-      html += `<p class="mb-2"><strong>⚠️ Sinais de alerta:</strong> ${backend.red_flags.join("; ")}</p>`;
+      const sigFlags = backend.red_flags.join("|");
+      if (sigFlags !== state.UX.flagsCardShownSig) {
+        state.UX.flagsCardShownSig = sigFlags;
+        html += `<p class="mb-2"><strong>⚠️ Sinais de alerta:</strong> ${backend.red_flags.join("; ")}</p>`;
+      }
     }
 
+    // Diferenciais
     if (backend && !(backend._error || backend.error) && Array.isArray(backend.differentials)) {
       html += `<p class="mb-1"><strong>Diagnósticos diferenciais:</strong></p><ul class="ml-4 list-disc">`;
       backend.differentials.slice(0, 3).forEach(d => {
@@ -470,15 +500,15 @@
         html += `<p class="mt-2 text-xs opacity-70">Servidor de apoio indisponível no momento; exibindo estimativa local.</p>`;
       }
     } else {
-      html += `<p>Continuo coletando informações. Conte mais sobre seus sintomas (início, intensidade, fatores que pioram/melhoram).</p>`;
+      html += `<p>Conte mais detalhes sobre seus sintomas (início, intensidade, fatores que pioram/melhoram), ou selecione itens no botão <em>Selecionar sintomas</em>.</p>`;
     }
 
+    // Próximos passos / nível de cuidado
     if (backend && !(backend._error || backend.error) && Array.isArray(backend.next_steps) && backend.next_steps.length) {
       html += `<p class="mt-2 mb-1"><strong>Próximos passos sugeridos:</strong></p><ul class="ml-4 list-disc">`;
       backend.next_steps.forEach(s => html += `<li>${s}</li>`);
       html += `</ul>`;
     }
-
     if (backend && !(backend._error || backend.error) && backend.care_level) {
       const label = backend.care_level === "emergency" ? "Emergência"
                   : backend.care_level === "urgency"   ? "Urgência" : "Rotina";
@@ -488,7 +518,7 @@
       html += `<p class="mt-1 text-sm opacity-80"><em>${backend.safety_note}</em></p>`;
     }
 
-    // Pergunta fechada (prioriza backend; senão, usa gaps locais)
+    // Perguntas SIM/NÃO (prioriza backend; se não houver, usa gaps locais)
     let ynAsked = false;
     if (backend?.query_suggestions?.questions?.length) {
       const q = backend.query_suggestions.questions[0];
@@ -604,7 +634,7 @@
   $("#start-btn")?.addEventListener("click", () => {
     state.consented = true;
     document.getElementById("consent")?.classList.add("hidden");
-    addMessage("bot", "Olá! Eu sou o OTTO. Vou tentar entender o seu quadro para orientar com segurança. 😊");
+    addMessage("bot", "Olá! Eu sou o OTTO. Você pode escrever livremente seus sintomas ou usar o botão <em>Selecionar sintomas</em>. Ambos funcionam juntos. 😊");
 
     // Mini-intake
     const mini = document.getElementById("mini-intake");
@@ -630,18 +660,16 @@
         else state.payload.sex = "OUTRO";
 
         closeMini();
-        addMessage("bot", "Obrigado! Idade e sexo registrados. Agora, selecione sintomas ou descreva o que sente.");
-        // Abrir seleção de sintomas imediatamente
+        addMessage("bot", "Idade e sexo registrados. Se quiser, selecione sintomas agora para acelerar a análise.");
         renderSymptoms();
         openOverlay("symptom-overlay");
       });
 
       miniSkip?.addEventListener("click", () => {
         closeMini();
-        addMessage("bot", "Tudo bem. Se preferir, pode informar sua idade/sexo por texto mais tarde.");
+        addMessage("bot", "Tudo bem. Se preferir, pode informar idade/sexo por texto mais tarde.");
       });
     } else {
-      // Fallback por chat
       addMessage("bot", "Antes de começarmos, informe por favor sua idade e sexo (biológico). Ex.: “32 anos, feminino”.");
     }
   });
@@ -670,7 +698,6 @@
 
   $("#skip-symptoms")?.addEventListener("click", () => {
     closeOverlay("symptom-overlay");
-    // não bloqueia cálculo; se nunca mostramos flags, mostrar agora
     if (!state._flagsOpenedOnce) {
       state._flagsOpenedOnce = true;
       renderFlags();
@@ -690,7 +717,6 @@
     const picked = sel.map(k => (SYMPTOMS_UI.find(s => s.key === k)?.label || k));
     if (picked.length) addMessage("bot", `Ok. Sintomas selecionados: ${picked.join(", ")}.`);
 
-    // abrir flags uma vez, sem bloquear cálculo
     if (!state._flagsOpenedOnce) {
       state._flagsOpenedOnce = true;
       renderFlags();
@@ -713,8 +739,6 @@
     }
     state.flagsAnswered = true;
     closeOverlay("flag-overlay");
-
-    addMessage("bot", "Obrigado. Vou analisar suas informações.");
     computeAndRespond();
   });
 

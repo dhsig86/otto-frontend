@@ -1,8 +1,8 @@
-// diagnostics.js — Motor local de diferenciais (v4.1 “ENT Book”)
+// diagnostics.js — Motor local de diferenciais (v4.2)
 // - Usa rules_otorrino.json (priors, symptom_weights, modifiers).
 // - Exporta window.localDifferentials(payload, rules).
-// - Agrega referências por diagnóstico (rules.source + CURRENT Oto-HNS 3e map).
-// - Compatível com app-ui.js v4 e robotto.js v3.2.0.
+// - Gera gaps (perguntas) sem duplicar "febre" se já houver febre em sintomas OU negações.
+// - Compatível com app-ui.js v5 e robotto.js v3.3.0.
 
 (function () {
   // ===============================
@@ -13,20 +13,20 @@
   const norm = (s) => (s || "").toLowerCase().trim();
 
   // ===============================
-  // Mapa de capítulos do CURRENT Oto-HNS 3e
+  // Mapa de capítulos (referências resumidas)
   // ===============================
   const DX_TO_ENT_BOOK = {
-    "Otite Externa Aguda": ["CURRENT Oto-HNS 3e, Cap.47 — External Ear"],
-    "Otite Média Aguda": ["CURRENT Oto-HNS 3e, Cap.49 — Otitis Media"],
-    "Tampão de cerume": ["CURRENT Oto-HNS 3e, Cap.47 — External Ear (Cerumen)"],
-    "Rinossinusite viral": ["CURRENT Oto-HNS 3e, Cap.15 — Acute & Chronic Sinusitis"],
-    "Rinossinusite bacteriana": ["CURRENT Oto-HNS 3e, Cap.15 — Acute & Chronic Sinusitis"],
-    "Rinite alérgica": ["CURRENT Oto-HNS 3e, Cap.14 — Rhinitis"],
-    "Faringoamigdalite viral": ["CURRENT Oto-HNS 3e, Cap.31 — Oropharynx & Tonsil"],
-    "Amigdalite estreptocócica": ["CURRENT Oto-HNS 3e, Cap.31 — Oropharynx & Tonsil"],
-    "DRGE/LPR": ["CURRENT Oto-HNS 3e, Cap.30–31 — Larynx/Hypopharynx & Oropharynx"],
-    "Linfadenite reacional": ["CURRENT Oto-HNS 3e, Cap.27 — Neck Masses"],
-    "Sialadenite/sialolitíase": ["CURRENT Oto-HNS 3e, Cap.18–19 — Salivary Glands"]
+    "Otite Externa Aguda": ["CURRENT Oto-HNS 3e — External Ear"],
+    "Otite Média Aguda": ["CURRENT Oto-HNS 3e — Otitis Media"],
+    "Tampão de cerume": ["CURRENT Oto-HNS 3e — External Ear (Cerumen)"],
+    "Rinossinusite viral": ["CURRENT Oto-HNS 3e — Acute & Chronic Sinusitis"],
+    "Rinossinusite bacteriana": ["CURRENT Oto-HNS 3e — Acute & Chronic Sinusitis"],
+    "Rinite alérgica": ["CURRENT Oto-HNS 3e — Rhinitis"],
+    "Faringoamigdalite viral": ["CURRENT Oto-HNS 3e — Oropharynx & Tonsil"],
+    "Amigdalite estreptocócica": ["CURRENT Oto-HNS 3e — Oropharynx & Tonsil"],
+    "DRGE/LPR": ["CURRENT Oto-HNS 3e — Larynx/Hypopharynx & Oropharynx"],
+    "Linfadenite reacional": ["CURRENT Oto-HNS 3e — Neck Masses"],
+    "Sialadenite/sialolitíase": ["CURRENT Oto-HNS 3e — Salivary Glands"]
   };
 
   // ===============================
@@ -77,7 +77,6 @@
     (uiSymptoms || []).forEach(k => {
       const std = revAliases[k] || k;
       set.add(std);
-      // equivalências comuns
       if (std === "coriza") set.add("rinorreia");
       if (std === "nariz_entupido") set.add("obstrucao_nasal");
       if (std === "dor_de_garganta") set.add("odinofagia");
@@ -86,6 +85,7 @@
       if (std === "reducao_olfato") set.add("hiposmia");
       if (std === "dificuldade_de_ouvir") set.add("hipoacusia");
       if (std === "pressao_na_face") set.add("pressao_facial");
+      if (std === "mau_cheiro") set.add("cacosmia");
     });
     return set;
   }
@@ -106,8 +106,7 @@
     const traj = payload?.trajectory || null;
     const negs = new Set((payload?.negations || []).map(norm));
 
-    // cálculo: prior + Σ(weights)*K + Σ(modifiers.boost)
-    const K = 0.25; // fator de escala para symptom_weights (ajuste fino)
+    const K = 0.25; // fator de escala para symptom_weights
     const out = [];
 
     block.dx.forEach(d => {
@@ -117,14 +116,11 @@
       // sintomas
       const sw = d.symptom_weights || {};
       for (const key of Object.keys(sw)) {
-        if (sxSet.has(key)) {
-          score += K * toNum(sw[key], 0);
-        }
+        if (sxSet.has(key)) score += K * toNum(sw[key], 0);
       }
 
       // modifiers
       const md = d.modifiers || {};
-      // age
       if (Array.isArray(md.age) && age != null) {
         md.age.forEach(rule => {
           const gteOk = (rule.gte == null) || (age >= rule.gte);
@@ -132,7 +128,6 @@
           if (gteOk && lteOk) score += toNum(rule.boost, 0);
         });
       }
-      // duration_days
       if (Array.isArray(md.duration_days) && durationDays != null) {
         md.duration_days.forEach(rule => {
           const gteOk = (rule.gte == null) || (durationDays >= rule.gte);
@@ -140,17 +135,13 @@
           if (gteOk && lteOk) score += toNum(rule.boost, 0);
         });
       }
-      // trajectory
       if (Array.isArray(md.trajectory) && traj) {
         md.trajectory.forEach(rule => {
           const match = String(rule.is || "").toLowerCase() === String(traj).toLowerCase();
           const minD = toNum(rule.min_duration_days, null);
-          if (match && (minD == null || (durationDays != null && durationDays >= minD))) {
-            score += toNum(rule.boost, 0);
-          }
+          if (match && (minD == null || (durationDays != null && durationDays >= minD))) score += toNum(rule.boost, 0);
         });
       }
-      // fever_max_c
       if (Array.isArray(md.fever_max_c) && tmax != null) {
         md.fever_max_c.forEach(rule => {
           const gteOk = (rule.gte == null) || (tmax >= rule.gte);
@@ -158,14 +149,10 @@
           if (gteOk && lteOk) score += toNum(rule.boost, 0);
         });
       }
-      // negations
       if (md.negations && typeof md.negations === "object") {
         for (const negKey of Object.keys(md.negations)) {
           const boost = toNum(md.negations[negKey], 0);
-          // aceita "tosse" e "sem_tosse"
-          if (negs.has(negKey) || negs.has(`sem_${negKey}`)) {
-            score += boost;
-          }
+          if (negs.has(negKey) || negs.has(`sem_${negKey}`)) score += boost;
         }
       }
 
@@ -173,7 +160,6 @@
       out.push({ dx: d.name, score, source: d.source || null });
     });
 
-    // normaliza para probabilidades (soma 1)
     const sum = out.reduce((a, b) => a + b.score, 0) || 1;
     out.forEach(o => { o.probability = clamp(o.score / sum, 0, 1); });
     out.sort((a, b) => b.probability - a.probability);
@@ -185,18 +171,23 @@
   // ===============================
   function buildGaps(payload) {
     const qs = [];
-    // genéricas
+    const sxSet = new Set((payload?.symptoms || []).map(norm));
+    const negs = new Set((payload?.negations || []).map(norm));
+
+    // genéricas (evita perguntar febre 2x)
     if (!payload?.duration && !payload?.duration_norm) qs.push("Há quantos dias os sintomas começaram?");
     if (!payload?.trajectory) qs.push("Desde o início, os sintomas estão piorando?");
-    if (payload?.fever_max_c == null && !(payload?.negations || []).includes("febre")) qs.push("Você teve febre?");
-    // domínio-específicas (exemplo)
+    const hasFebre = sxSet.has("febre") || negs.has("febre") || /afebril/.test(String(payload?.freeTextOriginal || "")); 
+    if (payload?.fever_max_c == null && !hasFebre) qs.push("Você teve febre?");
+    
+    // domínio-específicas
     const dom = payload?.domain;
     if (dom === "nariz") {
       if (!/dupla_piora/i.test(String(payload?.trajectory || ""))) qs.push("Houve 'dupla piora' após alguma melhora?");
     }
     if (dom === "garganta") {
       qs.push("Você tem placas ou exsudato nas amígdalas?");
-      if (!((payload?.negations || []).includes("tosse") || /sem\s+tosse/i.test(String(payload?.freeTextOriginal || ""))))
+      if (!(negs.has("tosse") || /sem\s+tosse/i.test(String(payload?.freeTextOriginal || ""))))
         qs.push("Você tem tosse?");
     }
     if (dom === "ouvido") {
@@ -243,7 +234,7 @@
   }
 
   // ===============================
-  // Função principal: localDifferentials
+  // Função principal
   // ===============================
   function localDifferentials(payload, rules) {
     const r = rules || {};
@@ -252,29 +243,21 @@
     const confidence = estimateConfidence(list, payload);
     const gaps = buildGaps(payload);
 
-    // === Referências ===
+    // Referências
     const refsFromRules = [];
     const domain = payload?.domain || inferDomainFromText(payload?.freeText || payload?.freeTextOriginal || "");
     const dxBlock = r?.domains?.[domain]?.dx || [];
     const nameToSource = {};
     dxBlock.forEach(x => { nameToSource[String(x.name)] = x.source || null; });
-
-    list.forEach(d => {
-      const src = nameToSource[d.dx];
-      if (src) refsFromRules.push(String(src));
-    });
+    list.forEach(d => { const src = nameToSource[d.dx]; if (src) refsFromRules.push(String(src)); });
 
     const refsFromBook = [];
-    list.forEach(d => {
-      if (DX_TO_ENT_BOOK[d.dx]) refsFromBook.push(...DX_TO_ENT_BOOK[d.dx]);
-    });
+    list.forEach(d => { if (DX_TO_ENT_BOOK[d.dx]) refsFromBook.push(...DX_TO_ENT_BOOK[d.dx]); });
 
     const references = dedup([...refsFromRules, ...refsFromBook]);
 
     return { list, top3, confidence, gaps, references };
   }
 
-  // Expor global
   window.localDifferentials = localDifferentials;
 })();
-// ===============================
