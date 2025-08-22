@@ -45,7 +45,7 @@
     DEEMPHASIZE_DURATION: true,
 
     // Timeout de rede (ms)
-    TIMEOUT_MS: 18000,             // deve ser <= ao deadline do backend
+    TIMEOUT_MS: 24000,             // deve ser <= ao deadline do backend
     TIMEOUT_ASK_MS: 10000
   };
 
