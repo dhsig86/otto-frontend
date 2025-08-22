@@ -1,7 +1,7 @@
 /*
   ROBOTTO — Tele-ENT Triage Orchestrator
   File: robotto.js
-  Version: 5.0.0 (2025-08-22)
+  Version: 5.1.0
 
   O que este orquestrador faz
   ---------------------------
@@ -29,9 +29,11 @@
 (function () {
   // ========================= Config =========================
   const CONFIG = {
-    // Defina no index.html antes dos scripts:
-    //   window.ROB_BACKEND_API_URL = "https://<SEU-HEROKU-APP>.herokuapp.com";
-    BACKEND_API_URL: (window.ROB_BACKEND_API_URL || "https://<CONFIGURE-BACKEND>.example.com"),
+    // Pode sobrescrever em index.html ANTES deste script:
+    //   window.ROB_BACKEND_API_URL = "https://otto-backend-otosig-aceeb4ea00e8.herokuapp.com";
+    BACKEND_API_URL:
+      window.ROB_BACKEND_API_URL ||
+      "https://otto-backend-otosig-aceeb4ea00e8.herokuapp.com",
     ENDPOINT_TRIAGE: "/api/triage",
     ENDPOINT_ASK: "/api/ask",
 
@@ -45,7 +47,7 @@
     DEEMPHASIZE_DURATION: true,
 
     // Timeout de rede (ms)
-    TIMEOUT_MS: 24000,             // deve ser <= ao deadline do backend
+    TIMEOUT_MS: 28000,             // < 30s (H12 do Heroku), > deadline do backend
     TIMEOUT_ASK_MS: 10000
   };
 
@@ -130,7 +132,7 @@ Se vier apenas demografia, retorne uma pergunta única e objetiva para iniciar a
     return false;
   }
 
-  // >>> Mudança de texto é SEMPRE significativa (removeu limite por caracteres)
+  // >>> Mudança de texto é SEMPRE significativa (sem heurística de tamanho)
   function significantChange(prev, curr) {
     if (!prev) return true;
 
