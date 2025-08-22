@@ -1,211 +1,244 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
-  <title>OTTO – Triagem ORL</title>
-  <meta name="description" content="Assistente de triagem inicial em Otorrinolaringologia (ORL).">
-  <meta name="theme-color" content="#2563eb">
-  <link rel="icon" href="assets/otto-256.png" type="image/png">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OTTO • Triagem ORL</title>
+
+  <!-- Tailwind (ok para GitHub Pages em dev) -->
   <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Configuração do backend (pode sobrescrever aqui se precisar) -->
+  <script>
+    window.ROB_BACKEND_API_URL = "https://otto-backend-otosig-aceeb4ea00e8.herokuapp.com";
+  </script>
+
   <style>
-    @keyframes bounce-slow { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
-    .animate-bounce-slow { animation: bounce-slow 1.8s ease-in-out infinite; }
-    @keyframes fadeOut { to { opacity:0; visibility:hidden } }
-    .fade-out { animation: fadeOut .6s ease forwards; }
+    /* Chat bubbles */
+    .bubble {
+      max-width: 720px;
+      border-radius: 12px;
+      padding: .875rem 1rem;
+      box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+      white-space: pre-wrap;
+      line-height: 1.45;
+    }
+    .bubble-otto { background: #fff; border: 1px solid #e5e7eb; }
+    .bubble-user { background: #0ea5e9; color: #fff; align-self: flex-end; }
+    .msg { display: flex; gap: .75rem; margin-bottom: .75rem; }
+    .msg .avatar {
+      width: 36px; height: 36px; flex: none;
+      border-radius: 9999px; background: #e0f2fe;
+      display: grid; place-items: center; font-weight: 700; color: #0369a1;
+    }
+    .msg.user { justify-content: flex-end; }
+    .msg.user .avatar { display: none; }
+    .badge { font-size: .75rem; padding: .125rem .5rem; border-radius: 9999px; background:#f1f5f9; }
+    .pill { border:1px solid #e5e7eb; border-radius:9999px; padding:.5rem .9rem; background:#fff; }
+    .pill:disabled{opacity:.6; cursor:not-allowed;}
+    .progress-bar { height:10px; border-radius:6px; background:#e5e7eb; overflow:hidden;}
+    .progress-bar > div { height:100%; width:0; background:#16a34a; transition: width .25s ease; }
+    dialog::backdrop { background: rgba(15, 23, 42, .35); }
+    .modal-card { max-height: 80vh; overflow:auto; }
   </style>
 </head>
-<body class="bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100">
 
-  <!-- SPLASH OTTO -->
-  <div id="splash-otto" class="fixed inset-0 z-[60] grid place-items-center bg-gradient-to-b from-sky-50 to-sky-200 dark:from-gray-900 dark:to-gray-800">
-    <div class="text-center">
-      <img src="assets/otto-256.png" alt="OTTO" class="mx-auto h-40 w-40 animate-bounce-slow drop-shadow-xl select-none" draggable="false"/>
-      <p class="mt-4 text-lg font-semibold text-sky-700 dark:text-sky-300">OTTO está iniciando…</p>
+<body class="bg-slate-50 text-slate-900">
+  <!-- Header -->
+  <header class="bg-gradient-to-r from-sky-600 to-indigo-600 text-white">
+    <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-full bg-white/20 grid place-items-center font-bold">🤖</div>
+        <div>
+          <div class="text-xl font-semibold">OTTO</div>
+          <div class="text-sm opacity-90">Triagem ORL</div>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button id="btn-reset" class="pill text-sm bg-white/10 border-white/30 text-white hover:bg-white/20">Reiniciar</button>
+        <button id="btn-dark" class="pill text-sm bg-white/10 border-white/30 text-white hover:bg-white/20">🌙</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Aviso -->
+  <div class="bg-amber-100 text-amber-900 border-y border-amber-200">
+    <div class="max-w-5xl mx-auto px-4 py-2 text-sm">
+      Este assistente realiza triagem inicial e não substitui consulta médica.
     </div>
   </div>
 
-  <div class="mx-auto flex min-h-screen w-full max-w-md flex-col">
-    <!-- HEADER -->
-    <div class="sticky top-0 z-50">
-      <header class="grid grid-cols-[auto,1fr,auto] items-center gap-3 bg-gradient-to-r from-sky-600 to-indigo-600 p-4 text-white">
-        <div class="flex items-center gap-2">
-          <img src="assets/otto-rounded.png" alt="OTTO" class="h-9 w-9 rounded-full ring-2 ring-white/60 shadow"/>
-          <span class="font-semibold tracking-wide">OTTO</span>
-        </div>
-        <h1 class="text-center text-sm font-bold">Triagem ORL</h1>
-        <div class="flex justify-end gap-2">
-          <button id="reset-btn" type="button" aria-label="Reiniciar" class="rounded bg-white/15 px-2 py-1">↻</button>
-          <button id="theme-toggle" type="button" aria-label="Alternar tema" class="rounded bg-white/15 px-2 py-1">🌙</button>
-        </div>
-      </header>
-      <div class="bg-yellow-100 p-1 text-center text-xs text-gray-900 dark:bg-yellow-800 dark:text-gray-100">
-        Este assistente realiza triagem inicial e não substitui consulta médica.
+  <!-- Conteúdo -->
+  <main class="max-w-5xl mx-auto px-4 py-4">
+    <!-- Chat -->
+    <section id="chat" class="flex flex-col gap-2 mb-3"></section>
+
+    <!-- Barra de progresso -->
+    <div class="progress-bar mb-3"><div id="progress-bar" style="width:0%"></div></div>
+
+    <!-- Quick replies -->
+    <div id="quick-replies" class="flex flex-wrap gap-2 mb-3"></div>
+
+    <!-- Composer -->
+    <div class="flex flex-col gap-3">
+      <div class="flex flex-wrap gap-2">
+        <button id="btn-review" class="pill">Revisar sintomas</button>
+        <button id="btn-add-symptoms" class="pill">➕ Adicionar sintomas</button>
+        <button id="btn-report" class="pill">🧾 Gerar relatório</button>
+      </div>
+
+      <div class="flex items-stretch gap-2">
+        <input id="user-input" type="text" class="flex-1 rounded-lg border border-slate-300 px-3 py-3 bg-white"
+               placeholder="Descreva o que sente..." autocomplete="off" />
+        <button id="send-btn" class="px-5 rounded-lg bg-sky-600 text-white font-medium hover:bg-sky-700">Enviar</button>
       </div>
     </div>
+  </main>
 
-    <!-- CHAT -->
-    <main id="chat" class="relative flex-1 overflow-y-auto p-4" aria-label="Mensagens">
-      <!-- Watermark do mascote -->
-      <div aria-hidden="true" class="pointer-events-none absolute right-3 top-3 opacity-10 select-none">
-        <img src="assets/otto.png" alt="" class="h-28 w-28"/>
-      </div>
-      <div id="messages" class="space-y-2"></div>
-    </main>
-
-    <!-- FOOTER -->
-    <footer class="sticky bottom-0 bg-white p-4 dark:bg-gray-800">
-      <progress id="progress" value="0" max="1" class="mb-2 w-full dark:bg-gray-700"></progress>
-
-      <button id="review-symptoms" type="button" aria-label="Revisar sintomas"
-              class="mb-2 rounded border px-3 py-1 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100">
-        Revisar sintomas
-      </button>
-
-      <div id="quick-replies" class="mb-2 flex flex-wrap gap-2"></div>
-
-      <form id="input-form" class="flex gap-2">
-        <input id="user-input" type="text" aria-label="Mensagem do usuário" placeholder="Descreva o que sente..." autocomplete="off"
-               class="flex-1 rounded border p-2 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:placeholder-gray-400"/>
-        <button type="submit" aria-label="Enviar mensagem"
-                class="rounded-full bg-sky-600 px-4 py-2 text-white shadow hover:bg-sky-700 active:scale-[.98]">
-          Enviar
-        </button>
-      </form>
-    </footer>
-
-    <!-- Créditos -->
-    <div class="py-4 text-center text-xs text-gray-500 dark:text-gray-400">
-      Desenvolvido por Dr. Dario Hart • Apoio Otosig Telemedicina
-    </div>
-  </div>
-
-  <!-- CONSENTIMENTO (LGPD) -->
-  <div id="consent" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" role="dialog" aria-modal="true">
-    <div class="mx-4 w-full max-w-md rounded bg-white p-4 text-left dark:bg-gray-800">
-      <h2 class="mb-2 text-lg font-semibold">Consentimento LGPD</h2>
-
-      <div id="terms-box" class="mb-3 max-h-44 overflow-y-auto rounded border p-3 text-sm leading-relaxed dark:border-gray-600">
-        <p><strong>Finalidade:</strong> este serviço realiza triagem inicial em Otorrinolaringologia para orientar a priorização do atendimento. Não substitui consulta médica.</p>
-        <p><strong>Dados coletados:</strong> idade, sexo (biológico), sintomas, texto livre e sinais de alerta. Não solicitamos CPF, endereço ou imagens.</p>
-        <p><strong>Tratamento:</strong> os dados são usados para gerar hipóteses diagnósticas e recomendações de conduta. Parte do processamento pode ocorrer em servidores de parceiros tecnológicos.</p>
-        <p><strong>Base legal:</strong> consentimento (LGPD art. 7º, I).</p>
-        <p><strong>Direitos do titular:</strong> você pode solicitar acesso, correção ou eliminação dos dados. Para dúvidas, contate <em>contato@seusite.com</em>.</p>
-        <p><strong>Riscos:</strong> a orientação pode ser imprecisa. Em caso de emergência, procure atendimento imediato.</p>
-        <p class="mt-2 italic opacity-80">Role até o final para habilitar o checkbox.</p>
-      </div>
-
-      <label class="mb-3 flex items-center gap-2 text-sm">
-        <input id="lgpd-checkbox" type="checkbox" disabled />
+  <!-- LGPD -->
+  <dialog id="lgpd-modal" class="w-full max-w-2xl rounded-xl p-0">
+    <div class="modal-card p-6">
+      <h2 class="text-xl font-semibold mb-2">Consentimento LGPD</h2>
+      <p class="text-sm text-slate-700 mb-4">
+        Finalidade: este serviço realiza triagem inicial em Otorrinolaringologia para orientar a priorização do atendimento.
+        Não substitui consulta médica.
+      </p>
+      <ul class="list-disc pl-6 text-sm text-slate-700 space-y-1 mb-4">
+        <li><b>Dados coletados:</b> idade, sexo (biológico), sintomas, texto livre e sinais de alerta.</li>
+        <li><b>Tratamento:</b> uso para gerar hipóteses e recomendações de conduta.</li>
+      </ul>
+      <label class="flex items-center gap-2 mb-4">
+        <input id="lgpd-agree" type="checkbox" class="w-4 h-4">
         <span>Li e concordo com os termos de tratamento de dados.</span>
       </label>
-
-      <button id="start-btn" class="w-full rounded bg-blue-600 py-2 font-medium text-white opacity-50" disabled>
-        Começar
-      </button>
-    </div>
-  </div>
-
-  <!-- OVERLAY: MINI-INTAKE (IDADE/SEXO) -->
-  <div id="mini-intake" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50" role="dialog" aria-modal="true">
-    <form id="mini-intake-form" class="mx-4 w-full max-w-md space-y-4 rounded bg-white p-4 text-left dark:bg-gray-800">
-      <h2 class="text-center text-sm font-semibold">Antes de começarmos</h2>
-      <label class="block">
-        <span class="text-sm">Idade (anos)</span>
-        <input type="number" id="mini-age" min="0" max="120"
-               class="mt-1 w-full rounded border p-2 dark:border-gray-600 dark:bg-gray-700 dark:text-white" required>
-      </label>
-      <fieldset>
-        <legend class="text-sm mb-1">Sexo (biológico)</legend>
-        <label class="mr-4 inline-flex items-center gap-2">
-          <input type="radio" name="mini-sex" value="M" required> <span>Masculino</span>
-        </label>
-        <label class="mr-4 inline-flex items-center gap-2">
-          <input type="radio" name="mini-sex" value="F" required> <span>Feminino</span>
-        </label>
-        <label class="inline-flex items-center gap-2">
-          <input type="radio" name="mini-sex" value="OUTRO" required> <span>Outro/Prefiro não dizer</span>
-        </label>
-      </fieldset>
-      <div class="flex justify-between gap-2">
-        <button type="button" id="mini-intake-skip" class="rounded border px-3 py-1 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100">Pular</button>
-        <button type="submit" class="rounded bg-blue-600 px-3 py-1 text-white">Continuar</button>
-      </div>
-    </form>
-  </div>
-
-  <!-- OVERLAY: SINTOMAS -->
-  <div id="symptom-overlay" class="fixed inset-3 z-40 hidden items-center justify-center bg-black/40" role="dialog" aria-modal="true">
-    <form id="symptom-form" class="mx-4 w-full max-w-md space-y-4 rounded bg-white p-4 text-left dark:bg-gray-800">
-      <h2 class="text-center text-sm font-semibold">Sintomas atuais</h2>
-      <div id="symptom-options" class="max-h-60 space-y-2 overflow-y-auto"></div>
       <div class="flex justify-end gap-2">
-        <button type="button" id="skip-symptoms" class="rounded border px-3 py-1 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100">Pular</button>
-        <button type="submit" class="rounded bg-blue-600 px-3 py-1 text-white">Continuar</button>
+        <button id="lgpd-start" class="px-4 py-2 rounded-lg bg-sky-600 text-white disabled:opacity-50" disabled>Começar</button>
       </div>
-    </form>
-  </div>
+    </div>
+  </dialog>
 
-  <!-- OVERLAY: RED FLAGS -->
-  <div id="flag-overlay" class="fixed inset-3 z-40 hidden items-center justify-center bg-black/40" role="dialog" aria-modal="true">
-    <form id="flag-form" class="mx-4 w-full max-w-md space-y-4 rounded bg-white p-4 text-left dark:bg-gray-800">
-      <h2 class="text-center text-sm font-semibold">Sinais de Alerta</h2>
-      <div id="flag-options" class="max-h-60 space-y-2 overflow-y-auto"></div>
-      <label class="flex items-center space-x-2">
-        <input type="checkbox" id="no-flags"/>
-        <span>Não sinto nada alarmante no momento</span>
-      </label>
-      <div class="flex justify-end">
-        <button type="submit" class="rounded bg-blue-600 px-3 py-1 text-white">Continuar</button>
+  <!-- Mini-intake (idade/sexo) -->
+  <dialog id="intake-modal" class="w-full max-w-lg rounded-xl p-0">
+    <div class="modal-card p-6">
+      <h2 class="text-lg font-semibold mb-4">Antes de começarmos</h2>
+      <div class="mb-4">
+        <label class="block text-sm font-medium mb-1">Idade (anos)</label>
+        <input id="intake-age" type="number" min="0" max="120" class="w-full border rounded-lg px-3 py-2" placeholder="Ex.: 34">
       </div>
-    </form>
-  </div>
+      <div class="mb-4">
+        <div class="block text-sm font-medium mb-2">Sexo (biológico)</div>
+        <div class="flex flex-wrap gap-4">
+          <label class="flex items-center gap-2"><input type="radio" name="intake-sex" value="M"> Masculino</label>
+          <label class="flex items-center gap-2"><input type="radio" name="intake-sex" value="F"> Feminino</label>
+          <label class="flex items-center gap-2"><input type="radio" name="intake-sex" value="O"> Outro/Prefiro não dizer</label>
+        </div>
+      </div>
+      <div class="flex justify-between">
+        <button id="intake-skip" class="px-3 py-2 rounded-lg border">Pular</button>
+        <button id="intake-continue" class="px-4 py-2 rounded-lg bg-sky-600 text-white">Continuar</button>
+      </div>
+    </div>
+  </dialog>
 
-  <!-- Config do backend + splash hide -->
+  <!-- Caixa ÚNICA de sintomas -->
+  <dialog id="symptom-modal" class="w-full max-w-3xl rounded-xl p-0">
+    <div class="modal-card p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold">Selecionar sintomas</h2>
+        <button id="symptom-close" class="text-slate-500 hover:text-slate-700">✕</button>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-6">
+        <!-- OUVIDO -->
+        <div>
+          <div class="font-medium mb-2">Ouvido</div>
+          <div class="space-y-2">
+            <label class="flex items-center gap-2"><input type="checkbox" data-symptom="dor_de_ouvido"> Dor de ouvido</label>
+            <label class="flex items-center gap-2"><input type="checkbox" data-symptom="otorreia"> Secreção no ouvido (otorreia)</label>
+            <label class="flex items-center gap-2"><input type="checkbox" data-symptom="tinnitus"> Zumbido (tinnitus)</label>
+            <label class="flex items-center gap-2"><input type="checkbox" data-symptom="hipoacusia"> Perda de audição</label>
+            <label class="flex items-center gap-2"><input type="checkbox" data-symptom="vertigem"> Tontura/vertigem</label>
+          </div>
+        </div>
+
+        <!-- NARIZ -->
+        <div>
+          <div class="font-medium mb-2">Nariz</div>
+          <div class="space-y-2">
+            <label class="flex items-center gap-2"><input type="checkbox" data-symptom="nariz_entupido"> Nariz entupido</label>
+            <label class="flex items-center gap-2"><input type="checkbox" data-symptom="coriza"> Coriza/Catarro</label>
+            <label class="flex items-center gap-2"><input type="checkbox" data-symptom="espirros"> Espirros</label>
+            <label class="flex items-center gap-2"><input type="checkbox" data-symptom="epistaxe"> Sangramento nasal</label>
+            <label class="flex items-center gap-2"><input type="checkbox" data-symptom="dor_face"> Dor de face/sinusite</label>
+          </div>
+        </div>
+
+        <!-- GARGANTA (faringe) -->
+        <div>
+          <div class="font-medium mb-2">Garganta</div>
+          <div class="space-y-2">
+            <label class="flex items-center gap-2"><input type="checkbox" data-symptom="dor_de_garganta"> Dor de garganta</label>
+            <label class="flex items-center gap-2"><input type="checkbox" data-symptom="placas_amigdalas"> Placas nas amígdalas</label>
+            <label class="flex items-center gap-2"><input type="checkbox" data-symptom="disfagia"> Dificuldade para engolir</label>
+            <label class="flex items-center gap-2"><input type="checkbox" data-symptom="febre"> Febre</label>
+            <label class="flex items-center gap-2"><input type="checkbox" data-symptom="tosse"> Tosse</label>
+          </div>
+        </div>
+
+        <!-- LARINGE (voz) -->
+        <div>
+          <div class="font-medium mb-2">Laringe / Voz</div>
+          <div class="space-y-2">
+            <label class="flex items-center gap-2"><input type="checkbox" data-symptom="rouquidao"> Rouquidão / Sem voz</label>
+            <label class="flex items-center gap-2"><input type="checkbox" data-symptom="voz_abafada"> Voz abafada</label>
+            <label class="flex items-center gap-2"><input type="checkbox" data-symptom="dispneia_leve"> Falta de ar leve</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-6 flex items-center justify-between gap-3">
+        <div class="text-xs text-slate-500">Selecione o que se aplica. Você pode também descrever em texto livre.</div>
+        <div class="flex gap-2">
+          <button id="symptom-cancel" class="px-4 py-2 rounded-lg border">Cancelar</button>
+          <button id="symptom-save" class="px-4 py-2 rounded-lg bg-sky-600 text-white">Salvar</button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Scripts (ordem IMPORTA) -->
+  <script src="diagnostics.js"></script>
+  <script src="robotto.js"></script>
+  <script src="app-ui.js"></script>
+
   <script>
-    // URL do backend (Heroku)
-    window.ROB_BACKEND_API_URL = "https://otto-backend-otosig-aceeb4ea00e8.herokuapp.com";
+    // Inicialização mínima dos modais (UI nativa do app-ui.js vai controlar)
+    const lgpdModal = document.getElementById('lgpd-modal');
+    const intakeModal = document.getElementById('intake-modal');
+    const symptomModal = document.getElementById('symptom-modal');
 
-    // Oculta o splash após carregar
-    window.addEventListener("load", () => {
-      const s = document.getElementById("splash-otto");
-      if (s) setTimeout(() => s.classList.add("fade-out"), 900);
+    // Abre LGPD na primeira carga
+    window.addEventListener('DOMContentLoaded', () => {
+      if (lgpdModal && typeof lgpdModal.showModal === 'function') {
+        lgpdModal.showModal();
+      }
     });
 
-    // Habilita checkbox do consentimento ao rolar até o fim
-    (function enableConsentAfterScroll(){
-      const terms = document.getElementById('terms-box');
-      const chk = document.getElementById('lgpd-checkbox');
-      const btn = document.getElementById('start-btn');
-      if (!terms || !chk || !btn) return;
-      terms.addEventListener('scroll', () => {
-        const atBottom = terms.scrollTop + terms.clientHeight >= terms.scrollHeight - 8;
-        if (atBottom) chk.disabled = false;
-      });
-      // botão fica ativo apenas quando o checkbox estiver marcado
-      chk.addEventListener('change', () => {
-        btn.disabled = !chk.checked;
-        btn.classList.toggle('opacity-50', !chk.checked);
-      });
-    })();
-  </script>
-
-  <!-- Módulo local (diagnóstico) -->
-  <script src="diagnostics.js"></script>
-  <!-- Orquestrador -->
-  <script src="robotto.js"></script>
-  <!-- Ajuste de política de orquestração (antes da UI) -->
-  <script>
-    if (window.ROBOTTO?.setConfig) {
-      window.ROBOTTO.setConfig({
-        CALL_LLM_POLICY: "balanced",
-        LOCAL_CONF_THRESHOLD: 0.72,
-        HYBRID_BACKEND_WEIGHT: 0.6
+    // LGPD: habilita botão ao marcar
+    const agree = document.getElementById('lgpd-agree');
+    const start = document.getElementById('lgpd-start');
+    if (agree && start) {
+      agree.addEventListener('change', () => { start.disabled = !agree.checked; });
+      start.addEventListener('click', () => {
+        lgpdModal.close();
+        if (intakeModal && typeof intakeModal.showModal === 'function') intakeModal.showModal();
       });
     }
+
+    // Fechar modal de sintomas (o app-ui também controla isso)
+    document.getElementById('symptom-close')?.addEventListener('click', () => symptomModal.close());
+    document.getElementById('symptom-cancel')?.addEventListener('click', () => symptomModal.close());
   </script>
-  <!-- UI -->
-  <script src="app-ui.js"></script>
 </body>
 </html>
-
+<!-- ===================== End of index.html ===================== -->
