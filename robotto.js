@@ -1,32 +1,39 @@
 /*
   ROBOTTO — Tele-ENT Triage Orchestrator
   File: robotto.js
-  Version: 4.0.1 (2025-08-20)
+  Version: 5.0.0 (2025-08-22)
 
-  Objetivos implementados (Blueprint):
-  - Fluxo unificado: motor local primeiro; backend é chamado quando útil.
-  - NÃO chamar backend com apenas demografia.
-  - Injeta contexto local no free_text (sem mudar schema do backend).
-  - Política default "balanced" com limiar de confiança configurável.
-  - Unifica perguntas sugeridas (local + backend) e sinaliza "deferir" para UI.
-  - Envia ao backend apenas campos do TriageInput (FastAPI) — sem 422.
+  O que este orquestrador faz
+  ---------------------------
+  1) Motor local primeiro (diagnostics.js); enriquece payload (domínio, duração normalizada).
+  2) Decide quando chamar o backend /api/triage (LLM JSON) de forma "balanced" e fluida:
+     - Qualquer texto digitado (>=4 chars) em balanced libera LLM se confiança local < 0.95.
+     - Conflitos/flags sempre liberam.
+     - Sem “apenas demografia”.
+  3) Injeta um "contexto local" no free_text para acelerar o raciocínio do LLM.
+  4) Faz blend local+backend (peso configurável) e unifica perguntas sugeridas.
+  5) EXPÕE também um modo de entrevista sequencial via /api/ask:
+     - ROBOTTO.ask(caseState, lastUserText, goal?, style?) -> {assistant_text, quick_replies, used_fallback}
+     - ROBOTTO.buildCaseState(payload) para montar o case compacto a partir do payload atual.
+  6) Mantém API anterior:
+     window.ROBOTTO = {
+       run(payload, { rulesUrl?, forceLLM? } = {}) -> { ok, local, backend, meta },
+       ask(caseState, lastUserText, goal?, style?) -> Promise<...>,
+       buildCaseState(payload) -> caseState,
+       loadRules(url), setConfig(partial), last()
+     }
 
-  API:
-    window.ROBOTTO = {
-      run(payload, { rulesUrl?, forceLLM? } = {}) -> { ok, local, backend, meta },
-      setConfig(partial),
-      loadRules(url),
-      last()
-    }
+  NOTA: Este arquivo não renderiza UI; apenas orquestra. app-ui.js faz a apresentação.
 */
 
 (function () {
-  // ----------------- Config -----------------
+  // ========================= Config =========================
   const CONFIG = {
     // Defina no index.html antes dos scripts:
-    //   window.ROB_BACKEND_API_URL = "https://SEU-APP.herokuapp.com";
+    //   window.ROB_BACKEND_API_URL = "https://<SEU-HEROKU-APP>.herokuapp.com";
     BACKEND_API_URL: (window.ROB_BACKEND_API_URL || "https://<CONFIGURE-BACKEND>.example.com"),
-    ENDPOINT: "/api/triage",
+    ENDPOINT_TRIAGE: "/api/triage",
+    ENDPOINT_ASK: "/api/ask",
 
     // Orquestração
     CALL_LLM_POLICY: "balanced",   // "gpt_preferred" | "balanced" | "local_preferred"
@@ -37,11 +44,13 @@
     LANG: "pt-BR",
     DEEMPHASIZE_DURATION: true,
 
-    // Timeout de rede
-    TIMEOUT_MS: 120000
+    // Timeout de rede (ms)
+    TIMEOUT_MS: 18000,             // deve ser <= ao deadline do backend
+    TIMEOUT_ASK_MS: 10000
   };
 
-  // ----------------- System Prompt (PT-BR) — embed em free_text -----------------
+  // ================== System Prompt (PT-BR) ==================
+  // Embutimos como "hint" no free_text para orientar o LLM de /api/triage.
   const SYSTEM_PROMPT_PT = `
 Você é o OTTO, um assistente de triagem em Otorrinolaringologia. Fale SEMPRE em português do Brasil.
 
@@ -61,7 +70,7 @@ Formato JSON de saída esperado:
 Se vier apenas demografia, retorne uma pergunta única e objetiva para iniciar a coleta.
 `.trim();
 
-  // ----------------- Utils -----------------
+  // ================ Utils de base (puros) =================
   const clamp = (x, a, b) => Math.max(a, Math.min(b, Number.isFinite(+x) ? +x : a));
   const norm = (s) => (s || "").toLowerCase().trim();
   const uniq = (arr) => Array.from(new Set((arr || []).filter(Boolean)));
@@ -88,7 +97,7 @@ Se vier apenas demografia, retorne uma pergunta única e objetiva para iniciar a
     m = d.match(/^pt(\d+)h$/i);
     if (m) return Math.max(0.04, (+m[1]) / 24);
 
-    // textos livres
+    // textos livres: "3 dias", "2 semanas", "1 mes", "48h"
     const m2 = d.match(/(\d+)\s*(h|hora|horas|d|dia|dias|sem|semanas|m|mes|meses)/);
     if (m2) {
       const n = +m2[1];
@@ -107,6 +116,7 @@ Se vier apenas demografia, retorne uma pergunta única e objetiva para iniciar a
     if (/nariz|rin(i|o)|sinus|seio.*face|rinossinus|epistax/.test(t)) return "nariz";
     if (/gargant|faring|larin|amigdal|odinofag/.test(t)) return "garganta";
     if (/pescoc|cervic|linfon|n[oó]dul|caro[cç]o/.test(t)) return "pescoco";
+    // fallback: usar payload.domain se existir, senão "garganta"
     return payload?.domain || "garganta";
   }
 
@@ -120,7 +130,7 @@ Se vier apenas demografia, retorne uma pergunta única e objetiva para iniciar a
     return false;
   }
 
-  // >>> 2.1 — mudança de texto SEMPRE significativa
+  // >>> Mudança de texto é SEMPRE significativa (removeu limite por caracteres)
   function significantChange(prev, curr) {
     if (!prev) return true;
 
@@ -132,18 +142,15 @@ Se vier apenas demografia, retorne uma pergunta única e objetiva para iniciar a
       if ((prev[k] ?? null) !== (curr[k] ?? null)) return true;
     }
 
-    // Texto: se mudou, já é significativo
     const tPrev = norm(prev.freeTextOriginal || prev.freeText || "");
     const tCurr = norm(curr.freeTextOriginal || curr.freeText || "");
     if (tPrev !== tCurr) return true;
 
-    // Sintomas selecionados
     const a = new Set((prev.symptoms || []).map(norm));
     const b = new Set((curr.symptoms || []).map(norm));
     if (a.size !== b.size) return true;
     for (const x of b) if (!a.has(x)) return true;
 
-    // Red flags selecionadas
     const fa = new Set((prev.red_flags_reported || []).map(norm));
     const fb = new Set((curr.red_flags_reported || []).map(norm));
     if (fa.size !== fb.size) return true;
@@ -174,7 +181,7 @@ Se vier apenas demografia, retorne uma pergunta única e objetiva para iniciar a
     return stripped.length === 0;
   }
 
-  // ----------------- Rules cache -----------------
+  // ================== Cache de regras e último run ==================
   const CACHE = { rules: null, rulesUrl: null, last: null, lastPayload: null };
 
   async function loadRules(url) {
@@ -193,7 +200,7 @@ Se vier apenas demografia, retorne uma pergunta única e objetiva para iniciar a
     }
   }
 
-  // ----------------- Motor local -----------------
+  // ====================== Motor local ======================
   function runLocal(payload, rules) {
     const enriched = { ...payload };
     if (!enriched.domain) enriched.domain = inferDomain(enriched);
@@ -210,7 +217,7 @@ Se vier apenas demografia, retorne uma pergunta única e objetiva para iniciar a
     return local;
   }
 
-  // ----------------- Free-text com contexto local p/ LLM -----------------
+  // ============ Contexto local embedado no free_text ============
   function buildAugmentedFreeText(payload, local) {
     const userText = (payload.freeTextOriginal || payload.freeText || "").trim();
 
@@ -258,21 +265,34 @@ ${gaps}
     return userText ? `${userText}\n\n${ctx}` : ctx;
   }
 
-  // ----------------- Backend call (schema do FastAPI) -----------------
+  // =================== Chamada ao backend ===================
   async function callLLMBackendForTriage(payload, local) {
     const body = {
       free_text: buildAugmentedFreeText(payload, local),
       age: payload.age ?? null,
       sex: payload.sex ?? null,
+      domain: payload.domain ?? null,
       duration: payload.duration ?? payload.duration_norm ?? null,
+      duration_days: payload.duration_days ?? null,
+      trajectory: payload.trajectory ?? null,
+      fever_max_c: payload.fever_max_c ?? null,
+      negations: payload.negations || [],
       symptoms: payload.symptoms || [],
       comorbidities: payload.comorbidities || [],
       medications: payload.medications || [],
-      red_flags_reported: payload.red_flags_reported || []
+      red_flags_reported: payload.red_flags_reported || [],
+      language: CONFIG.LANG,
+      expect_json: true,
+      include_suggestions: true,
+      strategy: {
+        prefer_llm_reasoning: CONFIG.CALL_LLM_POLICY !== "local_preferred",
+        de_emphasize_duration: !!CONFIG.DEEMPHASIZE_DURATION,
+        backend_weight: CONFIG.HYBRID_BACKEND_WEIGHT
+      }
     };
 
     const urlBase = (CONFIG.BACKEND_API_URL || "").replace(/\/+$/, "");
-    const url = urlBase + CONFIG.ENDPOINT;
+    const url = urlBase + CONFIG.ENDPOINT_TRIAGE;
     const validUrl = /^https?:\/\//.test(urlBase) && !/[<>{}]/.test(urlBase);
     if (!validUrl) return { _error: true, message: "backend-url-not-configured" };
 
@@ -285,6 +305,7 @@ ${gaps}
     try {
       const res = await withTimeout(req, CONFIG.TIMEOUT_MS, "backend-timeout");
       if (!res.ok) throw new Error(`backend ${res.status}`);
+      const usedFallback = res.headers.get("X-Used-Fallback") === "true";
       const json = await res.json();
 
       // Normalização de campos
@@ -298,6 +319,7 @@ ${gaps}
       if (json?.query_suggestions?.questions && !Array.isArray(json.query_suggestions.questions)) {
         json.query_suggestions.questions = [];
       }
+      json._used_fallback = !!usedFallback;
       return json;
     } catch (e) {
       console.warn("backend error:", e);
@@ -305,7 +327,7 @@ ${gaps}
     }
   }
 
-  // ----------------- Decisão de chamada -----------------
+  // =============== Decisão: quando chamar LLM ===============
   function shouldCallLLM(policy, local, payload) {
     if (isOnlyDemographics(payload)) return false;
 
@@ -325,8 +347,9 @@ ${gaps}
     if (conf < threshold) return true;
     if (policy === "gpt_preferred" && (hasSymptoms || hasText)) return true;
 
-    // >>> 2.2 — no modo "balanced", se o usuário digitou algo, libere LLM (exceto quando confiança ~1.0)
-    if (policy === "balanced" && hasText && (local?.confidence ?? 0) < 0.95) {
+    // >>> Regra de fluidez: usuário digitou algo (>=4 chars) em balanced → libera LLM se conf < 0.95
+    if (policy === "balanced" && hasText && norm(payload.freeText || payload.freeTextOriginal).length >= 4 &&
+        (local?.confidence ?? 0) < 0.95) {
       return true;
     }
 
@@ -336,7 +359,7 @@ ${gaps}
     return false;
   }
 
-  // ----------------- Blend local + backend -----------------
+  // ============== Blend local + backend (Top-3) ==============
   function blendDifferentials(localList, backendList, wBackend) {
     const map = new Map();
     (localList || []).forEach(d => {
@@ -359,7 +382,7 @@ ${gaps}
     return blended.slice(0, 3);
   }
 
-  // ----------------- Unificação de perguntas sugeridas -----------------
+  // ========= Unificação de perguntas sugeridas (UI) =========
   function unifyQuestions(local, backend) {
     const qLocal = (local?.gaps?.questions || []).map(text => ({ text: String(text), options: ["Sim", "Não"] }));
     const qBackend = (backend?.query_suggestions?.questions || []).map(q => ({
@@ -367,7 +390,6 @@ ${gaps}
       options: Array.isArray(q.options) && q.options.length ? q.options : ["Sim", "Não"]
     }));
 
-    // dedupe por texto normalizado
     const seen = new Set();
     const out = [];
     for (const q of [...qLocal, ...qBackend]) {
@@ -379,21 +401,98 @@ ${gaps}
     return out.slice(0, 3);
   }
 
-  // ----------------- Orchestrator -----------------
+  // =============== CaseState p/ entrevistador ===============
+  function buildCaseState(payload) {
+    // Monta o "case" compacto para /api/ask — NÃO enviar histórico longo.
+    const domain = payload.domain || inferDomain(payload);
+    const duration_days = payload.duration_days ?? parseDurationDaysFrom(payload) ?? null;
+
+    const caseState = {
+      age: payload.age ?? null,
+      sex: payload.sex ?? null,
+      domainHints: [domain],
+      observations: {
+        symptoms: uniq(payload.symptoms || []),
+        duration_days,
+        trajectory: payload.trajectory || null,
+        fever_max_c: payload.fever_max_c ?? null,
+        negations: uniq(payload.negations || [])
+      },
+      answeredQA: payload.answeredQA || [],  // a UI pode popular isso
+      red_flags_reported: uniq(payload.red_flags_reported || [])
+    };
+    // Limpa nulls para reduzir tokens
+    function prune(obj) {
+      if (Array.isArray(obj)) return obj.filter(v => v != null).map(prune);
+      if (obj && typeof obj === "object") {
+        const out = {};
+        for (const [k, v] of Object.entries(obj)) {
+          if (v == null) continue;
+          out[k] = prune(v);
+        }
+        return out;
+      }
+      return obj;
+    }
+    return prune(caseState);
+  }
+
+  // =============== Chamada ao entrevistador =================
+  async function callAskEndpoint(caseState, lastUserText, goal, style) {
+    const urlBase = (CONFIG.BACKEND_API_URL || "").replace(/\/+$/, "");
+    const url = urlBase + CONFIG.ENDPOINT_ASK;
+    const validUrl = /^https?:\/\//.test(urlBase) && !/[<>{}]/.test(urlBase);
+    if (!validUrl) return { _error: true, message: "backend-url-not-configured" };
+
+    const body = {
+      case: caseState || {},
+      last_user_text: String(lastUserText || ""),
+      language: CONFIG.LANG,
+      style: style || "breve",
+      goal: goal || "next_question"
+    };
+
+    const req = fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
+
+    try {
+      const res = await withTimeout(req, CONFIG.TIMEOUT_ASK_MS, "ask-timeout");
+      if (!res.ok) throw new Error(`backend ${res.status}`);
+      const usedFallback = res.headers.get("X-Used-Fallback") === "true";
+      const json = await res.json();
+      return { ...json, _used_fallback: !!usedFallback };
+    } catch (e) {
+      console.warn("ask error:", e);
+      // fallback mínimo para UI não travar
+      return {
+        assistant_text: "Você percebe algum sinal de alarme como dificuldade para respirar, engolir ou sangramento?",
+        quick_replies: ["Sim", "Não"],
+        _used_fallback: true,
+        _error: true,
+        message: String(e)
+      };
+    }
+  }
+
+  // ====================== Orchestrator ======================
   async function run(payload, opts = {}) {
     const options = Object.assign({ rulesUrl: null, forceLLM: false }, opts);
     const rules = await loadRules(options.rulesUrl);
 
-    // 0) Domínio inferido se não vier
+    // 0) Inferir domínio se ausente
     if (!payload?.domain) payload = { ...payload, domain: inferDomain(payload || {}) };
 
     // 1) Motor local
     const local = runLocal(payload || {}, rules);
 
-    // 2) Gate: apenas demografia? devolve “deferir”
+    // 2) Gate: apenas demografia? devolve “deferir” e DICA: comece entrevista
     const onlyDemo = isOnlyDemographics(local.payload);
     if (onlyDemo) {
-      const resultDemo = {
+      const caseState = buildCaseState(local.payload);
+      const deferOut = {
         ok: true,
         local: Object.assign({}, local, { blendedTop3: [] }),
         backend: null,
@@ -409,19 +508,25 @@ ${gaps}
             significant_change: significantChange(CACHE.lastPayload, local.payload),
             only_demographics_blocked: true
           },
+          // A UI pode, se quiser, acionar o entrevistador com este caseState:
+          ask_hint: {
+            caseState,
+            goal: "next_question",
+            quickStart: true
+          },
           suggested_questions: unifyQuestions(local, null)
         }
       };
-      CACHE.last = resultDemo;
+      CACHE.last = deferOut;
       CACHE.lastPayload = JSON.parse(JSON.stringify(local.payload || {}));
-      return resultDemo;
+      return deferOut;
     }
 
     // 3) Decisão de chamada do backend
     const policy = CONFIG.CALL_LLM_POLICY;
     const callLLM = options.forceLLM || shouldCallLLM(policy, local, local.payload);
 
-    // 4) Backend
+    // 4) Backend /api/triage
     let backendResp = null;
     if (callLLM) {
       backendResp = await callLLMBackendForTriage(local.payload, local);
@@ -433,12 +538,15 @@ ${gaps}
       finalTop3 = blendDifferentials(finalTop3, backendResp.differentials, CONFIG.HYBRID_BACKEND_WEIGHT);
     }
 
-    // 6) Red flags unificadas (local + backend)
+    // 6) Red flags unificadas
     const rfLocal = local.red_flags || [];
     const rfBack = (backendResp && backendResp.red_flags) || [];
     const redFlagsMerged = uniq([...rfLocal, ...rfBack]);
 
-    // 7) Resultado final
+    // 7) Perguntas unificadas
+    const questions = unifyQuestions(local, backendResp);
+
+    // 8) Resultado final
     const result = {
       ok: true,
       local: Object.assign({}, local, { blendedTop3: finalTop3 }),
@@ -447,14 +555,21 @@ ${gaps}
         ready: true,
         policy,
         used_backend: !!backendResp && !backendResp._error,
+        backend_used_fallback: !!(backendResp && backendResp._used_fallback),
         red_flags_merged: redFlagsMerged,
-        suggested_questions: unifyQuestions(local, backendResp),
+        suggested_questions: questions,
         reasons: {
           below_threshold: (local.confidence ?? 0) < CONFIG.LOCAL_CONF_THRESHOLD,
           flags_present: (local.payload?.red_flags_reported || []).length > 0,
           conflict: detectConflict(local.payload),
           significant_change: significantChange(CACHE.lastPayload, local.payload),
           only_demographics_blocked: false
+        },
+        // Para a fase SEQUENTIAL_QA, a UI pode usar:
+        ask_hint: {
+          caseState: buildCaseState(local.payload),
+          goal: questions.length ? "next_question" : "confirm_summary",
+          quickStart: false
         }
       }
     };
@@ -464,15 +579,21 @@ ${gaps}
     return result;
   }
 
+  // ===================== Exposed helpers =====================
+  async function ask(caseState, lastUserText, goal = "next_question", style = "breve") {
+    return await callAskEndpoint(caseState || {}, lastUserText || "", goal, style);
+  }
+
   function last() { return CACHE.last; }
+
   function setConfig(partial) {
     if (!partial || typeof partial !== "object") return;
     Object.assign(CONFIG, partial);
     CONFIG.HYBRID_BACKEND_WEIGHT = clamp(CONFIG.HYBRID_BACKEND_WEIGHT, 0, 1);
-    CONFIG.LOCAL_CONF_THRESHOLD = clamp(CONFIG.LOCAL_CONF_THRESHOLD, 0.5, 0.95);
+    CONFIG.LOCAL_CONF_THRESHOLD = clamp(CONFIG.LOCAL_CONF_THRESHOLD, 0.5, 0.98);
     if (partial.LANG) CONFIG.LANG = String(partial.LANG);
   }
 
-  // Expose
-  window.ROBOTTO = { run, loadRules, setConfig, last };
+  // ======================= Public API ========================
+  window.ROBOTTO = { run, ask, buildCaseState, loadRules, setConfig, last };
 })();

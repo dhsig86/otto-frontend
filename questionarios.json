@@ -1,0 +1,487 @@
+{
+  "banco_questionarios_otorrino_ptBR": [
+    {
+      "id_questionario": "snot_22",
+      "sigla": "SNOT-22",
+      "nome_completo": "Sino-Nasal Outcome Test-22",
+      "area_clinica": "Rinologia",
+      "titulo": "Teste de Resultados Sino-Nasais (SNOT-22)",
+      "descricao": "Este questionário avalia o impacto dos problemas nasais e sinusais na sua qualidade de vida.",
+      "instrucoes": "Por favor, avalie a gravidade de cada um dos sintomas abaixo nos últimos 14 dias, numa escala de 0 (nenhum problema) a 5 (problema o mais grave possível).",
+      "perguntas": [
+        {"id_pergunta": 1, "texto_pergunta": "Necessidade de assoar o nariz"},
+        {"id_pergunta": 2, "texto_pergunta": "Espirros"},
+        {"id_pergunta": 3, "texto_pergunta": "Coriza (nariz escorrendo)"},
+        {"id_pergunta": 4, "texto_pergunta": "Tosse"},
+        {"id_pergunta": 5, "texto_pergunta": "Gotejamento pós-nasal (secreção descendo pela garganta)"},
+        {"id_pergunta": 6, "texto_pergunta": "Obstrução ou congestão nasal"},
+        {"id_pergunta": 7, "texto_pergunta": "Dor ou pressão facial"},
+        {"id_pergunta": 8, "texto_pergunta": "Redução ou perda do olfato"},
+        {"id_pergunta": 9, "texto_pergunta": "Dor de ouvido"},
+        {"id_pergunta": 10, "texto_pergunta": "Tontura"},
+        {"id_pergunta": 11, "texto_pergunta": "Dificuldade para adormecer"},
+        {"id_pergunta": 12, "texto_pergunta": "Acordar durante a noite"},
+        {"id_pergunta": 13, "texto_pergunta": "Falta de um sono reparador"},
+        {"id_pergunta": 14, "texto_pergunta": "Cansaço durante o dia"},
+        {"id_pergunta": 15, "texto_pergunta": "Fadiga / Cansaço"},
+        {"id_pergunta": 16, "texto_pergunta": "Produtividade reduzida"},
+        {"id_pergunta": 17, "texto_pergunta": "Concentração reduzida"},
+        {"id_pergunta": 18, "texto_pergunta": "Frustração / Inquietação / Irritabilidade"},
+        {"id_pergunta": 19, "texto_pergunta": "Tristeza / Desânimo"},
+        {"id_pergunta": 20, "texto_pergunta": "Vergonha / Constrangimento"},
+        {"id_pergunta": 21, "texto_pergunta": "Problemas de olfato e paladar"},
+        {"id_pergunta": 22, "texto_pergunta": "Problemas de visão"}
+      ],
+      "opcoes_resposta": [
+        {"texto": "Nenhum problema", "valor": 0},
+        {"texto": "Problema muito leve", "valor": 1},
+        {"texto": "Problema leve", "valor": 2},
+        {"texto": "Problema moderado", "valor": 3},
+        {"texto": "Problema grave", "valor": 4},
+        {"texto": "Problema o mais grave possível", "valor": 5}
+      ],
+      "interpretacao_escore": [
+        {"limite_inferior": 0, "limite_superior": 10, "classificacao": "Impacto Mínimo ou Normal", "recomendacao": "Sintomas não parecem impactar significativamente a qualidade de vida."},
+        {"limite_inferior": 11, "limite_superior": 30, "classificacao": "Impacto Leve a Moderado", "recomendacao": "Os sintomas causam desconforto. Uma avaliação médica pode ser benéfica."},
+        {"limite_inferior": 31, "limite_superior": 110, "classificacao": "Impacto Severo", "recomendacao": "Sintomas impactam significativamente a qualidade de vida. Avaliação por especialista é fortemente recomendada."}
+      ]
+    },
+    {
+      "id_questionario": "nose_scale",
+      "sigla": "NOSE",
+      "nome_completo": "Nasal Obstruction Symptom Evaluation",
+      "area_clinica": "Rinologia",
+      "titulo": "Escala de Avaliação dos Sintomas de Obstrução Nasal (NOSE)",
+      "descricao": "Este questionário foca em quão incômodo é o seu sintoma de obstrução nasal (nariz entupido).",
+      "instrucoes": "Nas últimas 4 semanas, qual foi a gravidade dos seguintes problemas para você? A pontuação final será calculada automaticamente (soma dos pontos x 5).",
+      "perguntas": [
+        {"id_pergunta": 1, "texto_pergunta": "Congestão ou entupimento nasal"},
+        {"id_pergunta": 2, "texto_pergunta": "Bloqueio ou obstrução nasal"},
+        {"id_pergunta": 3, "texto_pergunta": "Dificuldade para respirar pelo nariz"},
+        {"id_pergunta": 4, "texto_pergunta": "Dificuldade para dormir"},
+        {"id_pergunta": 5, "texto_pergunta": "Não conseguir puxar ar suficiente pelo nariz durante exercício ou esforço"}
+      ],
+      "opcoes_resposta": [
+        {"texto": "Nenhum problema", "valor": 0},
+        {"texto": "Problema muito leve", "valor": 1},
+        {"texto": "Problema moderado", "valor": 2},
+        {"texto": "Problema razoavelmente ruim", "valor": 3},
+        {"texto": "Problema grave", "valor": 4}
+      ],
+      "interpretacao_escore": [
+        {"limite_inferior": 5, "limite_superior": 25, "classificacao": "Obstrução Leve", "recomendacao": "A obstrução nasal parece ser leve."},
+        {"limite_inferior": 30, "limite_superior": 50, "classificacao": "Obstrução Moderada", "recomendacao": "A obstrução nasal causa desconforto moderado."},
+        {"limite_inferior": 55, "limite_superior": 75, "classificacao": "Obstrução Grave", "recomendacao": "A obstrução nasal é um problema significativo."},
+        {"limite_inferior": 80, "limite_superior": 100, "classificacao": "Obstrução Muito Grave", "recomendacao": "A obstrução nasal é severa e requer avaliação por especialista."}
+      ]
+    },
+    {
+      "id_questionario": "vhi_10",
+      "sigla": "VHI-10",
+      "nome_completo": "Voice Handicap Index-10",
+      "area_clinica": "Laringologia",
+      "titulo": "Índice de Desvantagem Vocal - 10 (IDV-10)",
+      "descricao": "As seguintes afirmações descrevem o impacto que seu problema de voz tem em sua vida. Avalie cada uma delas.",
+      "instrucoes": "Para cada afirmação, marque a frequência com que você vivencia a situação, de 0 (nunca) a 4 (sempre).",
+      "perguntas": [
+        {"id_pergunta": 1, "texto_pergunta": "Minha voz me faz ter dificuldade em ser ouvido(a)."},
+        {"id_pergunta": 2, "texto_pergunta": "As pessoas não entendem o que eu digo por causa da minha voz."},
+        {"id_pergunta": 3, "texto_pergunta": "As pessoas pedem para eu repetir o que eu disse quando falo ao telefone."},
+        {"id_pergunta": 4, "texto_pergunta": "Sinto que tenho que me esforçar para falar."},
+        {"id_pergunta": 5, "texto_pergunta": "Fico ansioso(a) ou frustrado(a) por causa da minha voz."},
+        {"id_pergunta": 6, "texto_pergunta": "Minha voz me faz evitar sair com pessoas."},
+        {"id_pergunta": 7, "texto_pergunta": "Fico tenso(a) ao conversar com os outros por causa da minha voz."},
+        {"id_pergunta": 8, "texto_pergunta": "Minha voz me incomoda."},
+        {"id_pergunta": 9, "texto_pergunta": "Minha voz me faz sentir incompetente."},
+        {"id_pergunta": 10, "texto_pergunta": "Falta ar para falar."}
+      ],
+      "opcoes_resposta": [
+        {"texto": "Nunca", "valor": 0},
+        {"texto": "Quase Nunca", "valor": 1},
+        {"texto": "Às vezes", "valor": 2},
+        {"texto": "Quase Sempre", "valor": 3},
+        {"texto": "Sempre", "valor": 4}
+      ],
+      "interpretacao_escore": [
+        {"limite_inferior": 0, "limite_superior": 10, "classificacao": "Desvantagem Vocal Mínima ou Ausente", "recomendacao": "O problema de voz parece não ter grande impacto."},
+        {"limite_inferior": 11, "limite_superior": 40, "classificacao": "Desvantagem Vocal Significativa", "recomendacao": "A voz está causando um impacto relevante. Uma avaliação com especialista (otorrino/fonoaudiólogo) é recomendada."}
+      ]
+    },
+    {
+      "id_questionario": "epworth_sleepiness_scale",
+      "sigla": "ESE",
+      "nome_completo": "Epworth Sleepiness Scale",
+      "area_clinica": "Medicina do Sono",
+      "titulo": "Escala de Sonolência de Epworth (ESE)",
+      "descricao": "Este questionário tem como objetivo medir o seu nível geral de sonolência diurna.",
+      "instrucoes": "Qual a probabilidade de você cochilar ou adormecer nas seguintes situações, em contraste a apenas se sentir cansado? Utilize a seguinte escala para escolher o número mais apropriado para cada situação.",
+      "perguntas": [
+        {"id_pergunta": 1, "texto_pergunta": "Sentado(a) e lendo"},
+        {"id_pergunta": 2, "texto_pergunta": "Assistindo televisão"},
+        {"id_pergunta": 3, "texto_pergunta": "Sentado(a), inativo(a), em um lugar público (ex: teatro, reunião)"},
+        {"id_pergunta": 4, "texto_pergunta": "Como passageiro(a) em um carro por uma hora sem parar"},
+        {"id_pergunta": 5, "texto_pergunta": "Deitado(a) para descansar à tarde, quando as circunstâncias permitem"},
+        {"id_pergunta": 6, "texto_pergunta": "Sentado(a) e conversando com alguém"},
+        {"id_pergunta": 7, "texto_pergunta": "Sentado(a) calmamente após o almoço (sem álcool)"},
+        {"id_pergunta": 8, "texto_pergunta": "Em um carro, parado(a) por alguns minutos no trânsito"}
+      ],
+      "opcoes_resposta": [
+        {"texto": "Nenhuma chance de cochilar", "valor": 0},
+        {"texto": "Pequena chance de cochilar", "valor": 1},
+        {"texto": "Moderada chance de cochilar", "valor": 2},
+        {"texto": "Alta chance de cochilar", "valor": 3}
+      ],
+      "interpretacao_escore": [
+        {"limite_inferior": 0, "limite_superior": 10, "classificacao": "Normal", "recomendacao": "O nível de sonolência diurna é considerado dentro da normalidade."},
+        {"limite_inferior": 11, "limite_superior": 24, "classificacao": "Sonolência Diurna Excessiva", "recomendacao": "A pontuação sugere sonolência excessiva, o que justifica uma avaliação médica para investigar possíveis distúrbios do sono."}
+      ]
+    },
+    {
+      "id_questionario": "stop_bang",
+      "sigla": "STOP-Bang",
+      "nome_completo": "STOP-Bang Questionnaire",
+      "area_clinica": "Medicina do Sono",
+      "titulo": "Questionário STOP-Bang",
+      "descricao": "Um questionário de rastreio para avaliar o risco de Apneia Obstrutiva do Sono (AOS).",
+      "instrucoes": "Responda 'Sim' ou 'Não' para as seguintes perguntas. As últimas 4 perguntas podem necessitar de medições (IMC, idade, etc.).",
+      "perguntas": [
+        {"id_pergunta": 1, "texto_pergunta": "S - Snoring (Ronco): Você ronca alto, tão alto que pode ser ouvido através de portas fechadas?"},
+        {"id_pergunta": 2, "texto_pergunta": "T - Tired (Cansado): Você se sente frequentemente cansado, fadigado ou sonolento durante o dia?"},
+        {"id_pergunta": 3, "texto_pergunta": "O - Observed (Observado): Alguém já observou você parar de respirar ou engasgar durante o sono?"},
+        {"id_pergunta": 4, "texto_pergunta": "P - Pressure (Pressão): Você faz ou já fez tratamento para pressão alta?"},
+        {"id_pergunta": 5, "texto_pergunta": "B - BMI (IMC): Seu Índice de Massa Corporal (IMC) é maior que 35 kg/m²?"},
+        {"id_pergunta": 6, "texto_pergunta": "A - Age (Idade): Você tem mais de 50 anos?"},
+        {"id_pergunta": 7, "texto_pergunta": "N - Neck (Pescoço): A circunferência do seu pescoço é maior que 40 cm?"},
+        {"id_pergunta": 8, "texto_pergunta": "G - Gender (Gênero): Você é do gênero masculino?"}
+      ],
+      "opcoes_resposta": [
+        {"texto": "Sim", "valor": 1},
+        {"texto": "Não", "valor": 0}
+      ],
+      "interpretacao_escore": [
+        {"limite_inferior": 0, "limite_superior": 2, "classificacao": "Baixo Risco de AOS", "recomendacao": "É improvável que tenha Apneia Obstrutiva do Sono moderada ou grave."},
+        {"limite_inferior": 3, "limite_superior": 4, "classificacao": "Risco Intermediário de AOS", "recomendacao": "Há um risco intermediário de ter Apneia Obstrutiva do Sono moderada ou grave."},
+        {"limite_inferior": 5, "limite_superior": 8, "classificacao": "Alto Risco de AOS", "recomendacao": "Há um alto risco de ter Apneia Obstrutiva do Sono moderada ou grave. Recomenda-se avaliação especializada."}
+      ]
+    },
+    {
+      "id_questionario": "rqlq",
+      "sigla": "RQLQ",
+      "nome_completo": "Rhinoconjunctivitis Quality of Life Questionnaire",
+      "area_clinica": "Rinologia",
+      "titulo": "Questionário de Qualidade de Vida em Rinoconjuntivite (RQLQ)",
+      "descricao": "Mede o impacto da rinite e da conjuntivite alérgica na qualidade de vida do paciente.",
+      "instrucoes": "Pense em como você esteve durante a última semana e responda o quanto você foi incomodado(a) por cada um dos seguintes itens. (Nota: Devido ao grande número de perguntas (28), apenas uma amostra será listada aqui. A implementação completa requer todas as 28 perguntas).",
+      "perguntas": [
+        {"id_pergunta": 1, "texto_pergunta": "Obstrução nasal / nariz entupido"},
+        {"id_pergunta": 2, "texto_pergunta": "Coriza / nariz escorrendo"},
+        {"id_pergunta": 3, "texto_pergunta": "Crises de espirros"},
+        {"id_pergunta": 4, "texto_pergunta": "Coceira no nariz"},
+        {"id_pergunta": 5, "texto_pergunta": "Sede / boca seca por respirar pela boca"},
+        {"id_pergunta": 6, "texto_pergunta": "Coceira / queimação nos olhos"},
+        {"id_pergunta": 7, "texto_pergunta": "Lacrimejamento"},
+        {"id_pergunta": 8, "texto_pergunta": "Olhos vermelhos"}
+      ],
+      "opcoes_resposta": [
+        {"texto": "Não incomodou", "valor": 0},
+        {"texto": "Muito pouco", "valor": 1},
+        {"texto": "Pouco", "valor": 2},
+        {"texto": "Moderadamente", "valor": 3},
+        {"texto": "Muito", "valor": 4},
+        {"texto": "Muitíssimo", "valor": 5},
+        {"texto": "Extremamente", "valor": 6}
+      ],
+      "interpretacao_escore": [
+        {"limite_inferior": 0, "limite_superior": 0, "classificacao": "Varia por domínio", "recomendacao": "A pontuação é calculada como a média dos itens em cada domínio (atividades, sono, etc.). Pontuações mais altas indicam pior qualidade de vida. Uma redução de 0.5 pontos é considerada clinicamente significativa."}
+      ]
+    },
+    {
+      "id_questionario": "comq_12",
+      "sigla": "COMQ-12",
+      "nome_completo": "Chronic Otitis Media Questionnaire-12",
+      "area_clinica": "Otologia",
+      "titulo": "Questionário de Otite Média Crônica - 12 (COMQ-12)",
+      "descricao": "Avalia a gravidade dos sintomas e o impacto na qualidade de vida em pacientes com Otite Média Crônica.",
+      "instrucoes": "Para cada item, indique o quão severamente você foi afetado(a) no último mês. Se um sintoma não se aplica, marque 0.",
+      "perguntas": [
+        {"id_pergunta": 1, "texto_pergunta": "Secreção no(s) ouvido(s)"},
+        {"id_pergunta": 2, "texto_pergunta": "Mau cheiro vindo do(s) ouvido(s)"},
+        {"id_pergunta": 3, "texto_pergunta": "Perda auditiva no dia-a-dia"},
+        {"id_pergunta": 4, "texto_pergunta": "Dor no(s) ouvido(s)"},
+        {"id_pergunta": 5, "texto_pergunta": "Zumbido ou outros ruídos no(s) ouvido(s)"},
+        {"id_pergunta": 6, "texto_pergunta": "Tontura ou desequilíbrio"},
+        {"id_pergunta": 7, "texto_pergunta": "A necessidade de limpar o(s) ouvido(s)"},
+        {"id_pergunta": 8, "texto_pergunta": "Incapacidade de nadar ou de molhar o(s) ouvido(s)"},
+        {"id_pergunta": 9, "texto_pergunta": "Impacto na sua vida doméstica ou familiar"},
+        {"id_pergunta": 10, "texto_pergunta": "Impacto na sua vida social ou recreativa"},
+        {"id_pergunta": 11, "texto_pergunta": "Impacto no seu trabalho ou estudos"},
+        {"id_pergunta": 12, "texto_pergunta": "Com que frequência você consulta um médico por causa do(s) seu(s) ouvido(s)?"}
+      ],
+      "opcoes_resposta": [
+        {"texto": "Não afetado", "valor": 0},
+        {"texto": "Muito levemente", "valor": 1},
+        {"texto": "Levemente", "valor": 2},
+        {"texto": "Moderadamente", "valor": 3},
+        {"texto": "Severamente", "valor": 4},
+        {"texto": "Muito severamente", "valor": 5}
+      ],
+      "interpretacao_escore": [
+        {"limite_inferior": 0, "limite_superior": 60, "classificacao": "Pontuação Total", "recomendacao": "A pontuação total (soma dos 12 itens) varia de 0 a 60. Pontuações mais altas indicam maior gravidade e pior qualidade de vida. É usado para monitorar a resposta ao tratamento."}
+      ]
+    },
+    {
+      "id_questionario": "osa_18",
+      "sigla": "OSA-18",
+      "nome_completo": "Obstructive Sleep Apnea-18",
+      "area_clinica": "Otorrinolaringologia Pediátrica",
+      "titulo": "Questionário de Apneia Obstrutiva do Sono - 18 (OSA-18)",
+      "descricao": "Avalia o impacto na qualidade de vida de crianças com distúrbios respiratórios do sono, respondido pelos pais/cuidadores.",
+      "instrucoes": "Para cada item, por favor, circule o número que melhor descreve a frequência do problema na sua criança no último mês.",
+      "perguntas": [
+        {"id_pergunta": 1, "texto_pergunta": "Ronco alto"},
+        {"id_pergunta": 2, "texto_pergunta": "Pausas na respiração durante o sono"},
+        {"id_pergunta": 3, "texto_pergunta": "Dificuldade para respirar durante o sono"},
+        {"id_pergunta": 4, "texto_pergunta": "Sufocamento ou tosse durante o sono"},
+        {"id_pergunta": 5, "texto_pergunta": "Sono agitado"},
+        {"id_pergunta": 6, "texto_pergunta": "Dificuldade para acordar de manhã"},
+        {"id_pergunta": 7, "texto_pergunta": "Acorda mal-humorado(a)"},
+        {"id_pergunta": 8, "texto_pergunta": "Sonolência diurna"},
+        {"id_pergunta": 9, "texto_pergunta": "Respira pela boca durante o dia"},
+        {"id_pergunta": 10, "texto_pergunta": "Problemas de comportamento"},
+        {"id_pergunta": 11, "texto_pergunta": "Hiperatividade"},
+        {"id_pergunta": 12, "texto_pergunta": "Dificuldade de concentração na escola"},
+        {"id_pergunta": 13, "texto_pergunta": "Problemas de aprendizagem"},
+        {"id_pergunta": 14, "texto_pergunta": "Crescimento inadequado"},
+        {"id_pergunta": 15, "texto_pergunta": "Quão preocupado(a) você está com a respiração da criança à noite?"},
+        {"id_pergunta": 16, "texto_pergunta": "Quão preocupado(a) você está com a sonolência diurna da criança?"},
+        {"id_pergunta": 17, "texto_pergunta": "Quão frustrado(a) você está com os problemas da criança?"},
+        {"id_pergunta": 18, "texto_pergunta": "Qual o impacto geral dos problemas respiratórios do sono da criança em você e sua família?"}
+      ],
+      "opcoes_resposta": [
+        {"texto": "Nunca", "valor": 1},
+        {"texto": "Quase Nunca", "valor": 2},
+        {"texto": "Às vezes", "valor": 3},
+        {"texto": "Frequentemente", "valor": 4},
+        {"texto": "Quase Sempre", "valor": 5},
+        {"texto": "Sempre", "valor": 6},
+        {"texto": "Não sei", "valor": 7}
+      ],
+      "interpretacao_escore": [
+        {"limite_inferior": 0, "limite_superior": 60, "classificacao": "Pequeno impacto na Qualidade de Vida", "recomendacao": "Os sintomas podem não justificar uma intervenção cirúrgica isoladamente."},
+        {"limite_inferior": 61, "limite_superior": 80, "classificacao": "Moderado impacto na Qualidade de Vida", "recomendacao": "A intervenção cirúrgica pode ser considerada."},
+        {"limite_inferior": 81, "limite_superior": 126, "classificacao": "Grande impacto na Qualidade de Vida", "recomendacao": "Os sintomas impactam significativamente a criança, e a intervenção cirúrgica é frequentemente indicada."}
+      ]
+    },
+    {
+      "id_questionario": "qod_ns",
+      "sigla": "QOD-NS",
+      "nome_completo": "Questionnaire of Olfactory Disorders-Negative Statements",
+      "area_clinica": "Rinologia",
+      "titulo": "Questionário de Distúrbios Olfativos - Declarações Negativas (QOD-NS)",
+      "descricao": "Mede o impacto da perda ou alteração do olfato na qualidade de vida do paciente.",
+      "instrucoes": "Por favor, indique o quanto você concorda com as seguintes afirmações sobre como seu problema de olfato o(a) afeta. (Amostra de perguntas).",
+      "perguntas": [
+        {"id_pergunta": 1, "texto_pergunta": "Sinto-me inseguro(a) porque não consigo cheirar as coisas (ex: fumaça, gás, comida estragada)."},
+        {"id_pergunta": 2, "texto_pergunta": "Sinto-me irritado(a) por não conseguir cheirar odores agradáveis (ex: flores, café, perfumes)."},
+        {"id_pergunta": 3, "texto_pergunta": "O prazer de comer diminuiu."},
+        {"id_pergunta": 4, "texto_pergunta": "Tenho medo de ter um odor corporal desagradável e não perceber."},
+        {"id_pergunta": 5, "texto_pergunta": "Sinto-me isolado(a) com meu problema de olfato."}
+      ],
+      "opcoes_resposta": [
+        {"texto": "Discordo totalmente", "valor": 0},
+        {"texto": "Discordo parcialmente", "valor": 1},
+        {"texto": "Concordo parcialmente", "valor": 2},
+        {"texto": "Concordo totalmente", "valor": 3}
+      ],
+      "interpretacao_escore": [
+        {"limite_inferior": 0, "limite_superior": 66, "classificacao": "Pontuação Total", "recomendacao": "A pontuação total (soma dos 22 itens) indica o grau de impacto negativo na qualidade de vida. Pontuações mais altas significam maior impacto e sofrimento."}
+      ]
+    },
+    {
+      "id_questionario": "face_scale",
+      "sigla": "FaCE",
+      "nome_completo": "Facial Clinimetric Evaluation Scale",
+      "area_clinica": "Otologia",
+      "titulo": "Escala de Avaliação Clinimétrica Facial (FaCE)",
+      "descricao": "Avalia o impacto funcional e psicossocial da paralisia facial na perspectiva do paciente.",
+      "instrucoes": "Responda às seguintes perguntas sobre como sua condição facial o(a) afetou na última semana. (Amostra de perguntas).",
+      "perguntas": [
+        {"id_pergunta": 1, "texto_pergunta": "Comer: A comida ou bebida escapa da minha boca."},
+        {"id_pergunta": 2, "texto_pergunta": "Falar: Tenho dificuldade em pronunciar certas palavras."},
+        {"id_pergunta": 3, "texto_pergunta": "Boca: Tenho espasmos ou movimentos involuntários na minha bochecha/boca."},
+        {"id_pergunta": 4, "texto_pergunta": "Olho: Meu olho lacrimeja excessivamente."},
+        {"id_pergunta": 5, "texto_pergunta": "Bem-estar social: Sinto-me constrangido(a) em público por causa da minha aparência facial."}
+      ],
+      "opcoes_resposta": [
+        {"texto": "Nenhuma dificuldade/problema", "valor": 5},
+        {"texto": "Um pouco de dificuldade/problema", "valor": 4},
+        {"texto": "Alguma dificuldade/problema", "valor": 3},
+        {"texto": "Muita dificuldade/problema", "valor": 2},
+        {"texto": "Dificuldade/problema extremo", "valor": 1}
+      ],
+      "interpretacao_escore": [
+        {"limite_inferior": 0, "limite_superior": 100, "classificacao": "Pontuação Total", "recomendacao": "A pontuação total é convertida para uma escala de 0 a 100, onde 100 representa nenhuma disfunção ou problema. Pontuações mais baixas indicam maior impacto da paralisia facial."}
+      ]
+    },
+
+
+    {
+      "id_questionario": "rsi",
+      "sigla": "RSI",
+      "nome_completo": "Reflux Symptom Index",
+      "area_clinica": "Laringologia",
+      "titulo": "Índice de Sintomas de Refluxo (ISR)",
+      "descricao": "Este questionário avalia a gravidade de sintomas que podem estar associados ao refluxo laringofaríngeo.",
+      "instrucoes": "Nas últimas 4 semanas, qual foi a gravidade dos seguintes problemas para você? Classifique de 0 (nenhum problema) a 5 (problema grave).",
+      "perguntas": [
+        {"id_pergunta": 1, "texto_pergunta": "Rouquidão ou problemas com a voz"},
+        {"id_pergunta": 2, "texto_pergunta": "Pigarro (necessidade de limpar a garganta)"},
+        {"id_pergunta": 3, "texto_pergunta": "Excesso de muco na garganta ou gotejamento pós-nasal"},
+        {"id_pergunta": 4, "texto_pergunta": "Dificuldade para engolir alimentos, líquidos ou comprimidos"},
+        {"id_pergunta": 5, "texto_pergunta": "Tosse após se alimentar ou após deitar"},
+        {"id_pergunta": 6, "texto_pergunta": "Dificuldade para respirar ou episódios de sufocamento"},
+        {"id_pergunta": 7, "texto_pergunta": "Tosse incômoda"},
+        {"id_pergunta": 8, "texto_pergunta": "Sensação de algo preso na garganta (globus)"},
+        {"id_pergunta": 9, "texto_pergunta": "Azia, queimação, dor no peito, indigestão"}
+      ],
+      "opcoes_resposta": [
+        {"texto": "Nenhum problema", "valor": 0},
+        {"texto": " ", "valor": 1},
+        {"texto": " ", "valor": 2},
+        {"texto": "Problema moderado", "valor": 3},
+        {"texto": " ", "valor": 4},
+        {"texto": "Problema grave", "valor": 5}
+      ],
+      "interpretacao_escore": [
+        {"limite_inferior": 0, "limite_superior": 13, "classificacao": "Refluxo Laringofaríngeo Improvável", "recomendacao": "A pontuação não é sugestiva de refluxo como causa principal dos sintomas."},
+        {"limite_inferior": 14, "limite_superior": 45, "classificacao": "Refluxo Laringofaríngeo Provável", "recomendacao": "A pontuação é altamente sugestiva de refluxo. Recomenda-se avaliação médica para confirmação e tratamento."}
+      ]
+    },
+    {
+      "id_questionario": "dhi",
+      "sigla": "DHI",
+      "nome_completo": "Dizziness Handicap Inventory",
+      "area_clinica": "Otoneurologia",
+      "titulo": "Inventário de Desvantagem da Tontura (DHI)",
+      "descricao": "Este questionário avalia o impacto da tontura na sua vida.",
+      "instrucoes": "Responda 'Sim' (4 pontos), 'Às vezes' (2 pontos) ou 'Não' (0 pontos) para cada pergunta, pensando nos seus sintomas do último mês.",
+      "perguntas": [
+        {"id_pergunta": 1, "texto_pergunta": "Olhar para cima aumenta seu problema?"},
+        {"id_pergunta": 2, "texto_pergunta": "Por causa do seu problema, você tem dificuldade para andar no escuro?"},
+        {"id_pergunta": 3, "texto_pergunta": "Por causa do seu problema, você tem dificuldade em se levantar de manhã?"},
+        {"id_pergunta": 4, "texto_pergunta": "Movimentos rápidos da cabeça aumentam seu problema?"},
+        {"id_pergunta": 5, "texto_pergunta": "Virar-se na cama aumenta seu problema?"},
+        {"id_pergunta": 6, "texto_pergunta": "Por causa do seu problema, você tem dificuldade em fazer trabalhos domésticos?"},
+        {"id_pergunta": 7, "texto_pergunta": "Por causa do seu problema, você tem medo de sair de casa sem acompanhante?"},
+        {"id_pergunta": 8, "texto_pergunta": "Por causa do seu problema, você tem evitado lugares altos?"},
+        {"id_pergunta": 9, "texto_pergunta": "Abaixar-se aumenta seu problema?"},
+        {"id_pergunta": 10, "texto_pergunta": "Por causa do seu problema, você se sente frustrado(a)?"},
+        {"id_pergunta": 11, "texto_pergunta": "Por causa do seu problema, você tem dificuldade para andar em supermercados?"},
+        {"id_pergunta": 12, "texto_pergunta": "Por causa do seu problema, você se sente incapacitado(a)?"},
+        {"id_pergunta": 13, "texto_pergunta": "Andar na calçada aumenta seu problema?"},
+        {"id_pergunta": 14, "texto_pergunta": "Por causa do seu problema, você tem dificuldade para ler?"},
+        {"id_pergunta": 15, "texto_pergunta": "Por causa do seu problema, você se sente deprimido(a)?"},
+        {"id_pergunta": 16, "texto_pergunta": "Seu problema interfere nas suas relações familiares ou sociais?"},
+        {"id_pergunta": 17, "texto_pergunta": "Por causa do seu problema, você se sente tenso(a)?"},
+        {"id_pergunta": 18, "texto_pergunta": "Por causa do seu problema, você tem dificuldade para carregar objetos pesados?"},
+        {"id_pergunta": 19, "texto_pergunta": "Por causa do seu problema, você tem medo das pessoas pensarem que você está embriagado(a)?"},
+        {"id_pergunta": 20, "texto_pergunta": "Por causa do seu problema, você tem dificuldade para ir a festas?"},
+        {"id_pergunta": 21, "texto_pergunta": "Por causa do seu problema, você tem evitado certas atividades?"},
+        {"id_pergunta": 22, "texto_pergunta": "Por causa do seu problema, você tem medo de ficar sozinho(a) em casa?"},
+        {"id_pergunta": 23, "texto_pergunta": "Por causa do seu problema, você sente que está perdendo o controle?"},
+        {"id_pergunta": 24, "texto_pergunta": "Por causa do seu problema, você tem dificuldade para andar?"},
+        {"id_pergunta": 25, "texto_pergunta": "Por causa do seu problema, você tem dificuldade em tomar banho de chuveiro?"}
+      ],
+      "opcoes_resposta": [
+        {"texto": "Sim", "valor": 4},
+        {"texto": "Às vezes", "valor": 2},
+        {"texto": "Não", "valor": 0}
+      ],
+      "interpretacao_escore": [
+        {"limite_inferior": 0, "limite_superior": 30, "classificacao": "Impacto Leve", "recomendacao": "A tontura parece ter um impacto leve na sua vida."},
+        {"limite_inferior": 31, "limite_superior": 60, "classificacao": "Impacto Moderado", "recomendacao": "A tontura está causando um impacto moderado e limitante. Avaliação médica é recomendada."},
+        {"limite_inferior": 61, "limite_superior": 100, "classificacao": "Impacto Severo", "recomendacao": "A tontura causa um impacto severo na sua qualidade de vida. Procure um especialista."}
+      ]
+    },
+    {
+      "id_questionario": "thi",
+      "sigla": "THI",
+      "nome_completo": "Tinnitus Handicap Inventory",
+      "area_clinica": "Otologia",
+      "titulo": "Inventário de Desvantagem do Zumbido (THI)",
+      "descricao": "Este questionário avalia o impacto que o zumbido tem na sua vida.",
+      "instrucoes": "Responda 'Sim' (4 pontos), 'Às vezes' (2 pontos) ou 'Não' (0 pontos) para cada pergunta, refletindo sobre como o zumbido o afetou no último mês.",
+      "perguntas": [
+        {"id_pergunta": 1, "texto_pergunta": "Por causa do seu zumbido, é difícil para você se concentrar?"},
+        {"id_pergunta": 2, "texto_pergunta": "A intensidade do seu zumbido dificulta a sua audição?"},
+        {"id_pergunta": 3, "texto_pergunta": "O seu zumbido te deixa com raiva?"},
+        {"id_pergunta": 4, "texto_pergunta": "O seu zumbido te deixa confuso(a)?"},
+        {"id_pergunta": 5, "texto_pergunta": "Por causa do seu zumbido, você se sente desesperado(a)?"},
+        {"id_pergunta": 6, "texto_pergunta": "Você reclama muito por causa do seu zumbido?"},
+        {"id_pergunta": 7, "texto_pergunta": "Por causa do seu zumbido, você tem dificuldade para dormir à noite?"},
+        {"id_pergunta": 8, "texto_pergunta": "Você sente que não consegue escapar do seu zumbido?"},
+        {"id_pergunta": 9, "texto_pergunta": "O seu zumbido interfere na sua capacidade de desfrutar de atividades sociais?"},
+        {"id_pergunta": 10, "texto_pergunta": "Por causa do seu zumbido, você se sente frustrado(a)?"},
+        {"id_pergunta": 11, "texto_pergunta": "Por causa do seu zumbido, você se sente deprimido(a)?"},
+        {"id_pergunta": 12, "texto_pergunta": "Você sente que seu zumbido não está sob seu controle?"},
+        {"id_pergunta": 13, "texto_pergunta": "Você sente que seu zumbido interfere em seu trabalho ou tarefas domésticas?"},
+        {"id_pergunta": 14, "texto_pergunta": "Por causa do seu zumbido, você se irrita com frequência?"},
+        {"id_pergunta": 15, "texto_pergunta": "Por causa do seu zumbido, é difícil para você ler?"},
+        {"id_pergunta": 16, "texto_pergunta": "O seu zumbido te deixa chateado(a)?"},
+        {"id_pergunta": 17, "texto_pergunta": "Você acha que seu zumbido piorou seu estresse ou ansiedade?"},
+        {"id_pergunta": 18, "texto_pergunta": "Você acha difícil ignorar seu zumbido?"},
+        {"id_pergunta": 19, "texto_pergunta": "É difícil para você relaxar por causa do seu zumbido?"},
+        {"id_pergunta": 20, "texto_pergunta": "Você se sente cansado(a) por causa do seu zumbido?"},
+        {"id_pergunta": 21, "texto_pergunta": "Você tem dificuldade em se relacionar com as pessoas por causa do seu zumbido?"},
+        {"id_pergunta": 22, "texto_pergunta": "Você sente que tem um problema terrível por causa do seu zumbido?"},
+        {"id_pergunta": 23, "texto_pergunta": "Seu zumbido interfere em sua vida familiar?"},
+        {"id_pergunta": 24, "texto_pergunta": "Seu zumbido o(a) impede de ir a lugares que você gostaria de ir?"},
+        {"id_pergunta": 25, "texto_pergunta": "Você sente que seu zumbido afeta sua saúde geral?"}
+      ],
+      "opcoes_resposta": [
+        {"texto": "Sim", "valor": 4},
+        {"texto": "Às vezes", "valor": 2},
+        {"texto": "Não", "valor": 0}
+      ],
+      "interpretacao_escore": [
+        {"limite_inferior": 0, "limite_superior": 16, "classificacao": "Grau 1: Desprezível", "recomendacao": "O zumbido não parece ser um problema significativo."},
+        {"limite_inferior": 18, "limite_superior": 36, "classificacao": "Grau 2: Leve", "recomendacao": "O zumbido é leve, mas pode ser incômodo em algumas situações."},
+        {"limite_inferior": 38, "limite_superior": 56, "classificacao": "Grau 3: Moderado", "recomendacao": "O zumbido está causando um incômodo moderado e impactando a qualidade de vida."},
+        {"limite_inferior": 58, "limite_superior": 76, "classificacao": "Grau 4: Severo", "recomendacao": "O zumbido é um problema severo. Avaliação com especialista é fortemente recomendada."},
+        {"limite_inferior": 78, "limite_superior": 100, "classificacao": "Grau 5: Catastrófico", "recomendacao": "O zumbido tem um impacto devastador na qualidade de vida. Procure ajuda especializada imediatamente."}
+      ]
+    },
+    {
+      "id_questionario": "eat_10",
+      "sigla": "EAT-10",
+      "nome_completo": "Eating Assessment Tool-10",
+      "area_clinica": "Laringologia",
+      "titulo": "Ferramenta de Avaliação da Alimentação (EAT-10)",
+      "descricao": "Este questionário ajuda a identificar problemas de deglutição (dificuldade para engolir).",
+      "instrucoes": "Para cada afirmação, avalie a gravidade do problema em uma escala de 0 (nenhum problema) a 4 (problema grave).",
+      "perguntas": [
+        {"id_pergunta": 1, "texto_pergunta": "Meu problema para engolir me fez perder peso."},
+        {"id_pergunta": 2, "texto_pergunta": "Meu problema para engolir me impede de comer fora de casa."},
+        {"id_pergunta": 3, "texto_pergunta": "Engolir líquidos é um problema para mim."},
+        {"id_pergunta": 4, "texto_pergunta": "Engolir sólidos é um problema para mim."},
+        {"id_pergunta": 5, "texto_pergunta": "Engolir comprimidos é um problema para mim."},
+        {"id_pergunta": 6, "texto_pergunta": "Engolir é doloroso."},
+        {"id_pergunta": 7, "texto_pergunta": "O prazer de me alimentar é afetado pelo meu problema para engolir."},
+        {"id_pergunta": 8, "texto_pergunta": "Eu tusso quando como."},
+        {"id_pergunta": 9, "texto_pergunta": "Engolir me deixa estressado(a)."},
+        {"id_pergunta": 10, "texto_pergunta": "Engolir requer um esforço extra."}
+      ],
+      "opcoes_resposta": [
+        {"texto": "Nenhum problema", "valor": 0},
+        {"texto": " ", "valor": 1},
+        {"texto": " ", "valor": 2},
+        {"texto": " ", "valor": 3},
+        {"texto": "Problema grave", "valor": 4}
+      ],
+      "interpretacao_escore": [
+        {"limite_inferior": 0, "limite_superior": 2, "classificacao": "Risco de Disfagia Baixo", "recomendacao": "Não há indícios significativos de problemas de deglutição."},
+        {"limite_inferior": 3, "limite_superior": 40, "classificacao": "Risco de Disfagia Alto (Anormal)", "recomendacao": "A pontuação sugere um problema de deglutição (disfagia). É fundamental procurar avaliação médica para investigar a causa."}
+      ]
+    }
+  ]
+}
